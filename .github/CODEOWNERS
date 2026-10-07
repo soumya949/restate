@@ -1,0 +1,10 @@
+# Default owner for everything not matched below.
+* @soumya949
+
+# Sensitive paths: pr-governance.yml requires CODEOWNERS coverage for these.
+/.github/workflows/ @soumya949
+/.github/CODEOWNERS @soumya949
+/SECURITY.md @soumya949
+/.gitleaks.toml @soumya949
+/typescript/package.json @soumya949
+/python/pyproject.toml @soumya949

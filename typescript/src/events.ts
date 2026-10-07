@@ -112,11 +112,12 @@ export interface ActivityCompletedInit {
   result?: unknown;
   error?: ErrorInfo | null;
   status: "completed" | "failed";
+  extra?: Record<string, JsonValue> | undefined;
 }
 
 export function activityCompletedEvent(g: GovernanceContext, stepName: string, a: ActivityCompletedInit): EventEnvelope {
   return activityCompleted({
-    ...base(g, stepName, { status: a.status }),
+    ...base(g, stepName, { ...(a.extra ?? {}), status: a.status }),
     activityId: a.activityId,
     activityType: a.activityType,
     ...(a.status === "completed" ? { result: toJson(a.result) } : {}),

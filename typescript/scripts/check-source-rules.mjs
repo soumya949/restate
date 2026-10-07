@@ -6,7 +6,8 @@
  *  - P2 never bypass the base client: no raw "/api/v" paths, no X-OpenBox-* signing
  *    header literals (CopilotKit's check-no-duplicate-signing rule).
  *  - I1 Core I/O only in steps.ts (and API-key validation in runtime.ts). instrumentation.ts is
- *    allowed: span I/O only ever runs inside the tool's own ctx.run closure.
+ *    allowed: span I/O only ever runs inside the tool's own ctx.run closure. hooks.ts is
+ *    allowed: the audit hook is fire-and-forget, audit only, and only runs for executed runs.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ const rules = [
   {
     re: /\.(evaluate|pollApproval|sendHandoff)\s*\(/,
     msg: "OpenBox Core I/O outside steps.ts",
-    allow: ["steps.ts", "instrumentation.ts"]
+    allow: ["steps.ts", "instrumentation.ts", "hooks.ts"]
   }
 ];
 

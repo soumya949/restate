@@ -81,6 +81,7 @@ async function fetchWeather(city: string) {
   return { city: place.name, ...wx.current };
 }
 
+// <start_here>
 // AGENT
 const run = openboxHandler( // OPENBOX
   async (ctx: restate.Context, { message }: { message: string }) => {
@@ -105,6 +106,8 @@ const run = openboxHandler( // OPENBOX
   },
   { agentName: "restate-only-agent", promptFrom: (input) => input.message } // OPENBOX
 );
+
+// <end_here>
 
 const agentService = restate.service({
   name: "agent",

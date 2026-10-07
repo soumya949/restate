@@ -1,0 +1,19 @@
+title = "openbox-restate-sdk gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated artifacts, lockfiles, placeholders and test fixtures that are not real secrets"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)coverage/''',
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)uv\.lock$''',
+  '''(^|/)\.env\.example$''',
+]
+# Fake credentials used by the test suites against a fake OpenBox Core.
+regexes = [
+  '''obx_test_(restatesdk|parentagent|childagent|openaiagent|x+)''',
+]

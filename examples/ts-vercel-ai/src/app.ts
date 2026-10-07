@@ -39,6 +39,7 @@ async function getWeather(ctx: restate.Context, city: string) {
   });
 }
 
+// <start_here>
 // AGENT
 const run = openboxHandler( // OPENBOX
   async (ctx: restate.Context, { prompt }: { prompt: string }) => {
@@ -91,6 +92,8 @@ const run = openboxHandler( // OPENBOX
   },
   { agentName: "vercel-ai-agent", promptFrom: (input) => input.prompt } // OPENBOX
 );
+
+// <end_here>
 
 // AGENT SERVICE
 const agent = restate.service({

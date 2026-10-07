@@ -41,9 +41,15 @@ export interface GovernanceContext {
   readonly nameCounters: Map<string, number>;
   readonly usedActivityIds: Set<string>;
   vobjWarningLogged: boolean;
+  /** Governed tool executions in flight; the audit hook skips ctx.run calls they make (already governed). */
+  activeTools: number;
+  /** Per-name counters for the audit hook's activity ids (per attempt; audit only). */
+  readonly auditCounters: Map<string, number>;
 }
 
 const registry = new WeakMap<object, GovernanceContext>();
+// Invocation id → context of the attempt in flight. Released when the attempt ends (handler.ts).
+const byInvocation = new Map<string, GovernanceContext>();
 
 export interface ContextInit<I> {
   agentName?: string | undefined;
@@ -89,10 +95,23 @@ export function createGovernanceContext<I>(
     haltError: null,
     nameCounters: new Map(),
     usedActivityIds: new Set(),
-    vobjWarningLogged: false
+    vobjWarningLogged: false,
+    activeTools: 0,
+    auditCounters: new Map()
   };
   registry.set(ctx, g);
+  byInvocation.set(workflowId, g);
   return g;
+}
+
+/** The governance context of a running invocation, by invocation id (for Restate hooks, which only see the request). */
+export function governanceContextForInvocation(invocationId: string): GovernanceContext | undefined {
+  return byInvocation.get(invocationId);
+}
+
+/** Forget an invocation's context when its attempt ends. */
+export function releaseGovernanceContext(g: GovernanceContext): void {
+  if (byInvocation.get(g.workflowId) === g) byInvocation.delete(g.workflowId);
 }
 
 export function getGovernanceContext(ctx: restate.Context): GovernanceContext | undefined {

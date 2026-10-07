@@ -3,6 +3,25 @@
   "version": "0.1.0",
   "description": "OpenBox governance for durable AI agents running on Restate",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soumya949/restate.git",
+    "directory": "typescript"
+  },
+  "homepage": "https://github.com/soumya949/restate#readme",
+  "bugs": {
+    "url": "https://github.com/soumya949/restate/issues"
+  },
+  "keywords": [
+    "openbox",
+    "restate",
+    "ai-agents",
+    "governance",
+    "durable-execution",
+    "human-in-the-loop",
+    "guardrails",
+    "vercel-ai"
+  ],
   "type": "module",
   "sideEffects": false,
   "engines": {
@@ -42,10 +61,11 @@
     "test:unit": "vitest run test/unit",
     "test:restate": "vitest run test/restate",
     "test:watch": "vitest",
-    "ci:check": "npm run lint && npm run typecheck && npm run test && npm run build && npm run import:check",
+    "ci:check": "npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run import:check",
     "prepublishOnly": "npm run ci:check",
     "test:live": "vitest run test/live",
-    "pack:examples": "npm run build && node -e \"require('fs').mkdirSync('../examples/.packs',{recursive:true})\" && npm pack --pack-destination ../examples/.packs"
+    "pack:examples": "npm run build && node -e \"require('fs').mkdirSync('../examples/.packs',{recursive:true})\" && npm pack --pack-destination ../examples/.packs",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@openbox-ai/openbox-sdk-ts": "^2.1.0"
@@ -62,16 +82,20 @@
     "@restatedev/restate-sdk-testcontainers": "^1.17.2",
     "@restatedev/vercel-ai-middleware": "^0.4.0",
     "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^5.0.3",
     "ai": "^7.0.130",
     "superjson": "^2.2.6",
     "tsup": "^8.5.0",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4",
+    "vitest": "^5.0.3",
     "zod": "^4.6.5"
   },
   "peerDependenciesMeta": {
     "ai": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

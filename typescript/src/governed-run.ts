@@ -169,6 +169,7 @@ export async function runTool<I, O>(
 ): Promise<Outcome<O>> {
   const exec = (): Promise<O> => (opts.wrapInRun ? ctx.run(p.name, () => fn(p.input)) : fn(p.input));
   const binder = g.rt.spanBinder;
+  g.activeTools++;
   try {
     const result = binder
       ? await binder.run(
@@ -189,6 +190,8 @@ export async function runTool<I, O>(
     return { ok: true, result };
   } catch (err) {
     return { ok: false, err };
+  } finally {
+    g.activeTools--;
   }
 }
 

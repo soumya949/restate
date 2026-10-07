@@ -1,0 +1,115 @@
+# Release: push a bare semver tag (e.g. `git tag 0.1.0 && git push origin 0.1.0`).
+#
+#   versions   → the tag must equal all four version strings (TS package.json + version.ts,
+#                Python pyproject.toml + _version.py)
+#   quality    → ci.yml (TypeScript, Python, examples)        ┐ both must pass
+#   security   → pr-security.yml (Trivy, Gitleaks full history) ┘
+#   npm        → npm publish --provenance   (secret NPM_TOKEN; environment "release")
+#   pypi       → uv publish via PyPI trusted publishing (environment "pypi")
+#   github     → GitHub release with generated notes
+#
+# Manual dispatch must target an existing tag (`gh workflow run release.yml --ref 0.1.0`).
+name: Release
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  versions:
+    name: Versions match the tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "${TAG}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::'${TAG}' is not a bare semver tag (e.g. 0.1.0)"; exit 1; }
+          ts_pkg=$(node -p "require('./typescript/package.json').version")
+          ts_src=$(sed -nE 's/^export const SDK_VERSION = "(.+)";/\1/p' typescript/src/version.ts)
+          py_proj=$(python3 -c "import tomllib;print(tomllib.load(open('python/pyproject.toml','rb'))['project']['version'])")
+          py_src=$(sed -nE 's/^__version__ = "(.+)"/\1/p' python/openbox_restate/_version.py)
+          echo "tag=${TAG} ts package.json=${ts_pkg} version.ts=${ts_src} pyproject=${py_proj} _version.py=${py_src}"
+          for v in "${ts_pkg}" "${ts_src}" "${py_proj}" "${py_src}"; do
+            [ "${v}" = "${TAG}" ] || { echo "::error::version ${v} does not match tag ${TAG}"; exit 1; }
+          done
+
+  quality:
+    name: Quality
+    needs: versions
+    uses: ./.github/workflows/ci.yml
+
+  security:
+    name: Security
+    needs: versions
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/pr-security.yml
+
+  npm:
+    name: Publish to npm
+    needs: [quality, security]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run build && npm run import:check
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  pypi:
+    name: Publish to PyPI
+    needs: [quality, security]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write # PyPI trusted publishing
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+      - name: Publish
+        run: uv publish --trusted-publishing always
+
+  github:
+    name: GitHub release
+    needs: [npm, pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "${TAG}" --title "${TAG}" --generate-notes --verify-tag

@@ -124,3 +124,14 @@ def test_poll_interval_backoff() -> None:
         approval_poll_interval_ms=15_000, approval_poll_backoff=2.0, approval_poll_max_interval_ms=60_000
     )
     assert [next_interval_ms(cfg, n) for n in range(4)] == [15_000, 30_000, 60_000, 60_000]
+
+
+def test_version_matches_pyproject() -> None:
+    """The static __version__ (sent as the SDK identifier) must match the published version."""
+    import pathlib
+    import tomllib
+
+    from openbox_restate import __version__
+
+    pyproject = tomllib.loads((pathlib.Path(__file__).parents[1] / "pyproject.toml").read_text())
+    assert __version__ == pyproject["project"]["version"]

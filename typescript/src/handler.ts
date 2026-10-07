@@ -11,7 +11,7 @@
 import * as restate from "@restatedev/restate-sdk";
 
 import { waitForApproval } from "./approvals.js";
-import { createGovernanceContext, type GovernanceContext } from "./context.js";
+import { createGovernanceContext, releaseGovernanceContext, type GovernanceContext } from "./context.js";
 import { decide, detailsOf, redacted } from "./enforce.js";
 import { GovernanceBlockedError, GovernanceHaltError } from "./errors.js";
 import {
@@ -60,43 +60,57 @@ export function openboxHandler<C extends restate.Context, I, O>(
   return async (ctx: C, input: I): Promise<O> => {
     const rt = options.runtime ?? getDefaultRuntime();
     const g = createGovernanceContext(ctx, rt, { agentName: options.agentName, sessionId: options.sessionId }, input);
-    const captureInput = options.captureInput ?? true;
-    const captureOutput = options.captureOutput ?? true;
-
-    // 1. Start: WorkflowStarted (+ Handoff when called by a governed parent, + user prompt) in one journaled step.
-    const prompt = options.promptFrom?.(input);
-    const start = await evaluateStep(ctx, g, stepNames.start, () => {
-      const hand = handoffEvent(g);
-      return [
-        workflowStartedEvent(g, stepNames.start, input, captureInput),
-        ...(hand ? [hand] : []),
-        ...(prompt ? [userPromptEvent(g, stepNames.start, prompt)] : [])
-      ];
-    });
-    await enforceLifecycle(ctx, g, start, input, "start");
-
-    // 2. User code. A HALT that user code (or a framework, e.g. the AI SDK turning a tool
-    // error into a tool result) caught and swallowed still ends the session, reported as failed.
-    let output: O;
     try {
-      output = await fn(ctx, input);
-      if (g.halted) throw haltedError(g);
-    } catch (err) {
-      if (err instanceof restate.TerminalError && !restate.internal.isSuspendedError(err)) {
-        await bestEffort(g, "WorkflowFailed", () =>
-          evaluateStep(ctx, g, stepNames.endFailed, () => [workflowFailedEvent(g, stepNames.endFailed, errorInfoOf(err))])
-        );
-      }
-      throw err;
+      return await governInvocation(ctx, g, fn, input, options);
+    } finally {
+      releaseGovernanceContext(g);
     }
-
-    // 3. End: output guardrails may redact or block the returned value.
-    const end = await evaluateStep(ctx, g, stepNames.end, () => [
-      workflowCompletedEvent(g, stepNames.end, output, captureOutput)
-    ]);
-    await enforceLifecycle(ctx, g, end, output, "end");
-    return redacted(end, output, "output");
   };
+}
+
+async function governInvocation<C extends restate.Context, I, O>(
+  ctx: C,
+  g: GovernanceContext,
+  fn: Handler<C, I, O>,
+  input: I,
+  options: OpenBoxHandlerOptions<I>
+): Promise<O> {
+  const captureInput = options.captureInput ?? true;
+  const captureOutput = options.captureOutput ?? true;
+
+  // 1. Start: WorkflowStarted (+ Handoff when called by a governed parent, + user prompt) in one journaled step.
+  const prompt = options.promptFrom?.(input);
+  const start = await evaluateStep(ctx, g, stepNames.start, () => {
+    const hand = handoffEvent(g);
+    return [
+      workflowStartedEvent(g, stepNames.start, input, captureInput),
+      ...(hand ? [hand] : []),
+      ...(prompt ? [userPromptEvent(g, stepNames.start, prompt)] : [])
+    ];
+  });
+  await enforceLifecycle(ctx, g, start, input, "start");
+
+  // 2. User code. A HALT that user code (or a framework, e.g. the AI SDK turning a tool
+  // error into a tool result) caught and swallowed still ends the session, reported as failed.
+  let output: O;
+  try {
+    output = await fn(ctx, input);
+    if (g.halted) throw haltedError(g);
+  } catch (err) {
+    if (err instanceof restate.TerminalError && !restate.internal.isSuspendedError(err)) {
+      await bestEffort(g, "WorkflowFailed", () =>
+        evaluateStep(ctx, g, stepNames.endFailed, () => [workflowFailedEvent(g, stepNames.endFailed, errorInfoOf(err))])
+      );
+    }
+    throw err;
+  }
+
+  // 3. End: output guardrails may redact or block the returned value.
+  const end = await evaluateStep(ctx, g, stepNames.end, () => [
+    workflowCompletedEvent(g, stepNames.end, output, captureOutput)
+  ]);
+  await enforceLifecycle(ctx, g, end, output, "end");
+  return redacted(end, output, "output");
 }
 
 async function enforceLifecycle(

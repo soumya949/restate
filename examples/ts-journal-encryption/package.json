@@ -1,0 +1,23 @@
+{
+  "name": "openbox-restate-example-ts-journal-encryption",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Encrypt the Restate journal (incl. OpenBox verdict records) with a journal value codec",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmitOnError",
+    "start": "tsx ./src/app.ts",
+    "check": "tsx ./src/check-codec.ts",
+    "call": "tsx ./src/call.ts"
+  },
+  "dependencies": {
+    "@openbox-ai/openbox-restate-sdk": "file:../.packs/openbox-ai-openbox-restate-sdk-0.1.0.tgz",
+    "@restatedev/restate-sdk": "^1.17.2",
+    "@restatedev/restate-sdk-clients": "^1.17.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.2"
+  }
+}

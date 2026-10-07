@@ -11,6 +11,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # release.yml runs this as its quality gate.
+  workflow_call:
 
 permissions:
   contents: read
@@ -39,7 +41,8 @@ jobs:
 
       - run: npm ci
 
-      # Source rules, typecheck, unit + Restate integration tests, build, import-light check.
+      # Source rules, typecheck, unit + Restate integration tests with coverage floors
+      # (70/90/75/75), build, import-light check.
       - name: ci:check
         run: |
           set -o pipefail
@@ -53,6 +56,14 @@ jobs:
             grep -E "^\s*(Test Files|Tests)\s" ci.log | sed -E 's/\x1b\[[0-9;]*m//g; s/^\s+/- /' || echo "- no test summary (failed before tests)"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-typescript
+          path: typescript/coverage/lcov.info
+          if-no-files-found: warn
+
   python:
     name: Python
     runs-on: ubuntu-latest
@@ -60,7 +71,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ruff, mypy (strict), unit + Restate integration tests: the same Docker setup as local runs.
+      # ruff, mypy (strict), unit + Restate integration tests with a 75% coverage floor:
+      # the same Docker setup as local runs.
       - name: Test suite
         run: |
           set -o pipefail
@@ -73,6 +85,14 @@ jobs:
             echo "### Python"
             grep -E "^[0-9]+ (passed|failed)|[0-9]+ passed" python-ci.log | tail -1 | sed -E 's/^/- /' || echo "- no test summary (failed before tests)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-python
+          path: python/coverage.xml
+          if-no-files-found: warn
 
       - name: Stop Restate
         if: always()
@@ -100,9 +120,13 @@ jobs:
 
       - name: Typecheck examples
         run: |
-          for e in ts-restate-only ts-vercel-ai ts-multi-agent; do
+          for e in ts-restate-only ts-vercel-ai ts-multi-agent ts-journal-encryption; do
             echo "::group::$e"
             # --no-package-lock: the lockfiles pin the locally packed tarball's checksum; a typecheck does not need it.
             (cd "examples/$e" && npm install --no-package-lock --no-audit --no-fund && npx tsc --noEmit)
             echo "::endgroup::"
           done
+
+      - name: Journal codec self-check
+        working-directory: examples/ts-journal-encryption
+        run: npm run check

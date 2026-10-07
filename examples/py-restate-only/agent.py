@@ -87,6 +87,7 @@ TOOLS = [
     _fn("wire_money", "Wire money to an account", {"account": {"type": "string"}, "amount": {"type": "number"}}, ["account", "amount"]),
 ]
 
+# <start_here>
 agent_service = restate.Service("agent")
 
 
@@ -126,3 +127,4 @@ async def run(ctx: restate.Context, prompt: Prompt) -> str | None:
             )
             content = str(result) if is_blocked(result) else result
             messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": content})
+# <end_here>

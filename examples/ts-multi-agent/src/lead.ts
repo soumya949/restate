@@ -21,6 +21,7 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const Research: ResearchApi = { name: "research" } as ResearchApi;
 
+// <start_here>
 const lead = restate.service({
   name: "lead",
   handlers: {
@@ -55,5 +56,7 @@ const lead = restate.service({
   },
   options: { onJournalMismatchErrors: "pause" }
 });
+
+// <end_here>
 
 restate.serve({ services: [lead], port: Number(process.env["PORT"] ?? 9082) });

@@ -10,10 +10,8 @@ When a policy needs human approval, the invocation **suspends durably** until a 
 
 | Package | Path | Status |
 |---|---|---|
-| `@openbox-ai/openbox-restate-sdk` (TypeScript) | [`typescript/`](typescript) | P0–P2 done |
-| `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P0–P2 done |
-
-Design docs: [`../openbox-restate-sdk-prd.md`](../openbox-restate-sdk-prd.md) and [`../architecture.md`](../architecture.md). Section numbers in code comments (§x.y) refer to `architecture.md`.
+| `@openbox-ai/openbox-restate-sdk` (TypeScript) | [`typescript/`](typescript) | P0–P3 done (not yet published) |
+| `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P0–P3 done (not yet published) |
 
 ## How it works
 
@@ -178,6 +176,7 @@ The TypeScript examples install the SDK from a packed tarball, as a real install
 | [`examples/ts-restate-only`](examples/ts-restate-only) | raw agent loop + `governedCall` | `npm install && npm start`, register `localhost:9080` |
 | [`examples/ts-vercel-ai`](examples/ts-vercel-ai) | Vercel AI SDK + `governTools` | `npm install && npm start`, register `localhost:9081` |
 | [`examples/ts-multi-agent`](examples/ts-multi-agent) | lead → research over RPC, two OpenBox agents | `npm run start:research` and `npm run start:lead`, register `:9083` and `:9082` |
+| [`examples/ts-journal-encryption`](examples/ts-journal-encryption) | encrypted journal (incl. verdict records) | `npm install && npm start`, then `npm run call` |
 | [`examples/py-restate-only`](examples/py-restate-only) | raw agent loop + `governed_call` | `docker compose -f examples/py-restate-only/docker-compose.yml up` |
 | [`examples/py-openai-agents`](examples/py-openai-agents) | OpenAI Agents SDK + `govern_agent` | `docker compose -f examples/py-openai-agents/docker-compose.yml up` |
 
@@ -188,6 +187,13 @@ Each single-agent example has four tools, one per sandbox policy:
 - `delete_records`: BLOCK
 - `wire_money`: HALT
 - `send_email`: REQUIRE_APPROVAL. Approve or reject it in the OpenBox dashboard and the agent resumes.
+
+## Security
+
+- **Keys.** API keys and private keys are read once into the process-wide client. They are never journaled, logged or forwarded to child agents.
+- **What is journaled.** Only verdict and approval records, plus guardrail-redacted values (already redacted). For an encrypted journal, use Restate's `journalValueCodecProvider`; see [`examples/ts-journal-encryption`](examples/ts-journal-encryption). Callers then need the same codec.
+- **Audit.** `openboxAuditHook()` (TypeScript) reports `ctx.run` side effects made outside governed tools. It is audit only and never blocks.
+- **Reporting vulnerabilities.** See [`SECURITY.md`](SECURITY.md).
 
 ## Troubleshooting
 

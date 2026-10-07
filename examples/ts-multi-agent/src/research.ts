@@ -36,6 +36,7 @@ enableOpenBoxSpans({ runtime: rt });
 
 export type ResearchApi = typeof research;
 
+// <start_here>
 const research = restate.service({
   name: "research",
   handlers: {
@@ -78,5 +79,7 @@ const research = restate.service({
   },
   options: { onJournalMismatchErrors: "pause" }
 });
+
+// <end_here>
 
 restate.serve({ services: [research], port: Number(process.env["PORT"] ?? 9083) });
