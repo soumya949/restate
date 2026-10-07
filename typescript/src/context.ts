@@ -1,0 +1,104 @@
+/**
+ * Per-invocation governance context (architecture §3.4, §4).
+ *
+ * Rebuilt on EVERY attempt from invocation-constant inputs only (invocation
+ * id, target, headers). Nothing here is a source of truth for decisions —
+ * the Restate journal is.
+ */
+
+import type * as restate from "@restatedev/restate-sdk";
+
+import { OpenBoxContractError } from "./errors.js";
+import type { OpenBoxRestate } from "./runtime.js";
+
+export const HEADER_MULTI_AGENT_SESSION_ID = "x-openbox-multi-agent-session-id";
+export const HEADER_PARENT_WORKFLOW_ID = "x-openbox-parent-workflow-id";
+export const HEADER_PARENT_ACTIVITY_ID = "x-openbox-parent-activity-id";
+export const HEADER_PARENT_AGENT_DID = "x-openbox-parent-agent-did";
+
+export interface GovernanceContext {
+  readonly rt: OpenBoxRestate;
+  readonly workflowId: string;
+  readonly runId: string;
+  readonly workflowType: string;
+  readonly sessionId: string;
+  readonly multiAgentSessionId: string;
+  readonly parentWorkflowId: string | null;
+  readonly parentActivityId: string | null;
+  readonly agentName: string | null;
+  readonly service: string;
+  readonly handler: string;
+  readonly key: string | null;
+  readonly scope: string | null;
+  readonly limitKey: string | null;
+  /** Set after a HALT has been thrown in this attempt; short-circuits later governed calls. */
+  halted: boolean;
+  /** Per-name counters for steps that have no toolCallId (deterministic: program order). */
+  readonly nameCounters: Map<string, number>;
+  readonly usedActivityIds: Set<string>;
+  vobjWarningLogged: boolean;
+}
+
+const registry = new WeakMap<object, GovernanceContext>();
+
+export interface ContextInit<I> {
+  agentName?: string | undefined;
+  sessionId?: ((input: I) => string | null | undefined) | undefined;
+}
+
+export function createGovernanceContext<I>(
+  ctx: restate.Context,
+  rt: OpenBoxRestate,
+  init: ContextInit<I>,
+  input: I
+): GovernanceContext {
+  const req = ctx.request();
+  const target = req.target;
+  const workflowId = String(req.id);
+  // Never read `ctx.key` here: it throws TerminalError on plain services (architecture §4).
+  const key = target.key ?? null;
+  const headers = req.headers;
+
+  const workflowType = init.agentName ?? rt.config.restate.agentName ?? `${target.service}.${target.handler}`;
+
+  let sessionId: string;
+  if (key !== null) sessionId = `${target.service}/${key}`;
+  else sessionId = init.sessionId?.(input) ?? workflowId;
+
+  const g: GovernanceContext = {
+    rt,
+    workflowId,
+    runId: workflowId,
+    workflowType,
+    sessionId,
+    multiAgentSessionId: headers.get(HEADER_MULTI_AGENT_SESSION_ID) ?? `mas:${workflowId}`,
+    parentWorkflowId: headers.get(HEADER_PARENT_WORKFLOW_ID) ?? null,
+    parentActivityId: headers.get(HEADER_PARENT_ACTIVITY_ID) ?? null,
+    agentName: init.agentName ?? rt.config.restate.agentName ?? null,
+    service: target.service,
+    handler: target.handler,
+    key,
+    scope: req.scope ?? null,
+    limitKey: req.limitKey ?? null,
+    halted: false,
+    nameCounters: new Map(),
+    usedActivityIds: new Set(),
+    vobjWarningLogged: false
+  };
+  registry.set(ctx, g);
+  return g;
+}
+
+export function getGovernanceContext(ctx: restate.Context): GovernanceContext | undefined {
+  return registry.get(ctx);
+}
+
+export function requireGovernanceContext(ctx: restate.Context): GovernanceContext {
+  const g = registry.get(ctx);
+  if (!g) {
+    throw new OpenBoxContractError(
+      "governedRun/governedCall used outside an openboxHandler-wrapped handler. Wrap the handler with openboxHandler(...)."
+    );
+  }
+  return g;
+}

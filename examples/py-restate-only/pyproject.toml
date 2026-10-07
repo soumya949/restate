@@ -1,0 +1,19 @@
+[project]
+name = "openbox-restate-example-py-restate-only"
+version = "0.1.0"
+description = "Restate durable agent (no framework) governed by OpenBox"
+requires-python = ">=3.12"
+dependencies = [
+    "hypercorn",
+    "restate-sdk[serde]>=1.0.5",
+    "pydantic>=2.11.9",
+    "litellm",
+    "openbox-restate-sdk[spans]",
+    "httpx",
+]
+
+[tool.uv.sources]
+openbox-restate-sdk = { path = "../../python", editable = true }
+
+[tool.uv]
+package = false

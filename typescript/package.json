@@ -1,0 +1,59 @@
+{
+  "name": "@openbox-ai/openbox-restate-sdk",
+  "version": "0.1.0",
+  "description": "OpenBox governance for durable AI agents running on Restate",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24.10.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./instrumentation": {
+      "types": "./dist/instrumentation.d.ts",
+      "import": "./dist/instrumentation.js",
+      "default": "./dist/instrumentation.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "typecheck": "tsc --noEmit",
+    "lint": "node scripts/check-source-rules.mjs",
+    "import:check": "node scripts/check-root-import-light.mjs",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:restate": "vitest run test/restate",
+    "test:watch": "vitest",
+    "ci:check": "npm run lint && npm run typecheck && npm run test && npm run build && npm run import:check",
+    "prepublishOnly": "npm run ci:check",
+    "test:live": "vitest run test/live"
+  },
+  "dependencies": {
+    "@openbox-ai/openbox-sdk-ts": "^2.1.0"
+  },
+  "peerDependencies": {
+    "@restatedev/restate-sdk": "^1.17.2"
+  },
+  "devDependencies": {
+    "@restatedev/restate-sdk": "^1.17.2",
+    "@restatedev/restate-sdk-clients": "^1.17.2",
+    "@restatedev/restate-sdk-testcontainers": "^1.17.2",
+    "@types/node": "^24.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,41 @@
+# Python test runner (architecture §18).
+#
+# restate-sdk ships no Windows wheel, so the Python suite runs in Linux:
+#   docker compose -f python/docker-compose.test.yml run --rm tests
+#
+# `restate` forces a full journal replay after every suspension (the same
+# setting as the official harness' always_replay=True).
+services:
+  restate:
+    image: docker.io/restatedev/restate:latest
+    environment:
+      RESTATE_WORKER__INVOKER__INACTIVITY_TIMEOUT: "0s"
+      RESTATE_LOG_FILTER: "warn"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9070/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  tests:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    working_dir: /work/python
+    volumes:
+      - ..:/work
+      - uv-cache:/root/.cache/uv
+    environment:
+      UV_PROJECT_ENVIRONMENT: /venv
+      UV_LINK_MODE: copy
+      RESTATE_INGRESS_URL: http://restate:8080
+      RESTATE_ADMIN_URL: http://restate:9070
+    depends_on:
+      restate:
+        condition: service_started
+    command: >
+      sh -c "uv sync --quiet &&
+             uv run ruff check openbox_restate tests &&
+             uv run mypy openbox_restate &&
+             uv run pytest -q ${PYTEST_ARGS:-}"
+
+volumes:
+  uv-cache:

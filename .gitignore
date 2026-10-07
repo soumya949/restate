@@ -1,0 +1,29 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# node
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+
+# restate local data
+restate-data/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,60 @@
+[project]
+name = "openbox-restate-sdk"
+version = "0.1.0"
+description = "OpenBox governance for durable AI agents running on Restate"
+readme = "README.md"
+license = "MIT"
+# Stricter of restate-sdk (>=3.10) and openbox-sdk-python (>=3.11).
+requires-python = ">=3.11"
+dependencies = [
+    "openbox-sdk-python>=1.4.0",
+    "restate-sdk>=1.0.5",
+]
+
+[project.optional-dependencies]
+# Span capture (openbox_restate.instrumentation): HTTP instrumentation from the base SDK
+spans = ["openbox-sdk-python[http]>=1.4.0"]
+# P2: OpenAI Agents SDK integration (openbox_restate.openai)
+openai = ["restate-sdk[openai]>=1.0.5"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.26",
+    "mypy>=1.18",
+    "ruff>=0.6",
+    "httpx>=0.28",
+    "restate-sdk[harness,serde]>=1.0.5",
+    "openbox-sdk-python[http]>=1.4.0",
+    "hypercorn",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["openbox_restate"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "TID"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"uuid.uuid4".msg = "non-deterministic id (use ids.py / ctx.uuid())"
+"time.time".msg = "wall clock in control flow (use await ctx.time())"
+"random.random".msg = "non-deterministic (use ctx.random())"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
