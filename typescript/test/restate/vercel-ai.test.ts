@@ -91,6 +91,8 @@ const agent = restate.service({
                   return { city, temperature: 23 };
                 })
             }),
+            // Client-side tool (no execute): passed through ungoverned, with a warning.
+            askUser: tool({ description: "ask the user", inputSchema: z.object({ q: z.string() }) }),
             deleteRecords: tool({
               description: "delete",
               inputSchema: z.object({ table: z.string() }),
@@ -138,6 +140,7 @@ describe("governTools (Vercel AI SDK)", () => {
     expect(core.evaluations("ActivityCompleted", "getWeather")).toHaveLength(1);
     expect(core.evaluations("WorkflowStarted")).toHaveLength(1);
     expect(core.evaluations("WorkflowCompleted")).toHaveLength(1);
+    expect(warnings.some((w) => w.includes('"askUser" has no execute'))).toBe(true);
   });
 
   it("reports each model call once as an llm_call activity with model and tokens (despite replays)", async () => {
