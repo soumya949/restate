@@ -1,5 +1,7 @@
 # openbox-restate-sdk
 
+[![CI](https://github.com/soumya949/restate/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/soumya949/restate/actions/workflows/ci.yml)
+
 OpenBox governance for durable AI agents running on [Restate](https://restate.dev).
 
 Every side-effecting step of a Restate agent is checked against OpenBox policy **before** it runs and reported **after** it runs. All of these checks are journaled, so a replay never asks OpenBox the same question twice.
@@ -160,6 +162,8 @@ All options are listed in architecture §13.
 | `cd typescript && npm run ci:check` | source rules, typecheck, tests, build, import-light check | Docker |
 | `docker compose -f python/docker-compose.test.yml run --rm tests` | ruff, mypy (strict), unit tests + Restate integration (replay forced) | Docker |
 | `cd typescript && npm run test:live` | live smoke against your OpenBox sandbox (never part of `npm test`) | `.env` |
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every pull request to `main` and every push to `main`. It has three jobs: TypeScript (`ci:check`), Python (the Docker suite) and a typecheck of the TypeScript examples. It needs no secrets; the live tests are never run there.
 
 `restate-sdk` (Python) ships no Windows wheel. On Windows, run the Python suite and the Python example through Docker as shown.
 

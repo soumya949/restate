@@ -1,0 +1,108 @@
+# CI: runs on every pull request to main and every push to main.
+#
+# Both suites use a fake OpenBox Core and a real Restate server in Docker
+# (forced replay after every suspension). No secrets are needed: the live
+# tests against a real OpenBox (`npm run test:live`) are never run here.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: typescript
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+
+      - run: npm ci
+
+      # Source rules, typecheck, unit + Restate integration tests, build, import-light check.
+      - name: ci:check
+        run: |
+          set -o pipefail
+          npm run ci:check 2>&1 | tee ci.log
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### TypeScript"
+            grep -E "^\s*(Test Files|Tests)\s" ci.log | sed -E 's/\x1b\[[0-9;]*m//g; s/^\s+/- /' || echo "- no test summary (failed before tests)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # ruff, mypy (strict), unit + Restate integration tests: the same Docker setup as local runs.
+      - name: Test suite
+        run: |
+          set -o pipefail
+          docker compose -f python/docker-compose.test.yml run --rm tests 2>&1 | tee python-ci.log
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Python"
+            grep -E "^[0-9]+ (passed|failed)|[0-9]+ passed" python-ci.log | tail -1 | sed -E 's/^/- /' || echo "- no test summary (failed before tests)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop Restate
+        if: always()
+        run: docker compose -f python/docker-compose.test.yml down -v
+
+  examples:
+    name: Examples typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            typescript/package-lock.json
+            examples/*/package-lock.json
+
+      # The examples install the packed SDK, exactly like a user's npm install.
+      - name: Pack the SDK
+        working-directory: typescript
+        run: npm ci && npm run pack:examples
+
+      - name: Typecheck examples
+        run: |
+          for e in ts-restate-only ts-vercel-ai ts-multi-agent; do
+            echo "::group::$e"
+            # --no-package-lock: the lockfiles pin the locally packed tarball's checksum; a typecheck does not need it.
+            (cd "examples/$e" && npm install --no-package-lock --no-audit --no-fund && npx tsc --noEmit)
+            echo "::endgroup::"
+          done
