@@ -80,9 +80,13 @@ async def call(restate_ingress: str) -> Any:
     core.reset()
     counters["tool"] = 0
     api_hits["n"] = 0
-    for c in (agent_core, parent_core, child_core):
+    from .p4_app import CORES
+    from .p4_app import ran as p4_ran
+
+    for c in (agent_core, parent_core, child_core, *CORES.values()):
         c.reset()
     ran.clear()
+    p4_ran.clear()
     async with httpx.AsyncClient(timeout=60) as http:
 
         async def _call(handler: str, body: Any = None) -> httpx.Response:

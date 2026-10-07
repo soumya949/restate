@@ -11,7 +11,7 @@ When a policy needs human approval, the invocation **suspends durably** until a 
 | Package | Path | Status |
 |---|---|---|
 | `@openbox-ai/openbox-restate-sdk` (TypeScript) | [`typescript/`](typescript) | P0–P3 done (not yet published) |
-| `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P0–P3 done (not yet published) |
+| `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P0–P4 done (not yet published) |
 
 ## How it works
 
@@ -93,6 +93,16 @@ async def run(_ctx: restate.Context, req: Prompt) -> str:
 - A HALT is raised as an exception that is both an `AgentsException` and a `TerminalError`, so the Agents SDK does not retry it.
 - `@governed_function_tool` builds a single governed tool directly.
 - Hosted tools (web search, hosted MCP) run at OpenAI and cannot be checked before they run.
+
+**Google ADK, Pydantic AI, LangChain** (Python): swap Restate's integration class for the OpenBox one. It *is* Restate's class, with governance added inside Restate's turn-ordered tool window and an `llm_call` activity around every model call.
+
+| Framework | Restate's class | OpenBox drop-in | Extra |
+|---|---|---|---|
+| Google ADK | `RestatePlugin()` | `openbox_restate.adk.OpenBoxRestatePlugin()` | `[adk]` |
+| Pydantic AI | `RestateAgent(agent)` | `openbox_restate.pydantic_ai.OpenBoxRestateAgent(agent)` | `[pydantic-ai]` |
+| LangChain | `RestateMiddleware()` | `openbox_restate.langchain.OpenBoxRestateMiddleware()` | `[langchain]` |
+
+Add `@openbox_handler` to the handler as usual. In all three, a BLOCK goes back to the model as the tool result, a HALT ends the invocation, and approvals wait durably. ADK wraps callback errors in `RuntimeError`; `openbox_handler` unwraps governance errors, so they stay terminal.
 
 **Parallel tool calls** (`governedParallel` / `governed_parallel`): the pre-checks run one at a time in call order, the tools run concurrently, then the post-checks run in call order. This keeps the journal deterministic.
 
@@ -192,6 +202,9 @@ The TypeScript examples install the SDK from a packed tarball, as a real install
 | [`examples/ts-multi-agent`](examples/ts-multi-agent) | lead → research over RPC, two OpenBox agents | `npm run start:research` and `npm run start:lead`, register `:9083` and `:9082` |
 | [`examples/ts-journal-encryption`](examples/ts-journal-encryption) | encrypted journal (incl. verdict records) | `npm install && npm start`, then `npm run call` |
 | [`examples/py-restate-only`](examples/py-restate-only) | raw agent loop + `governed_call` | `docker compose -f examples/py-restate-only/docker-compose.yml up` |
+| [`examples/py-google-adk`](examples/py-google-adk) | Google ADK + `OpenBoxRestatePlugin` (OpenAI via LiteLLM) | `docker compose -f examples/py-google-adk/docker-compose.yml up` |
+| [`examples/py-pydantic-ai`](examples/py-pydantic-ai) | Pydantic AI + `OpenBoxRestateAgent` | `docker compose -f examples/py-pydantic-ai/docker-compose.yml up` |
+| [`examples/py-langchain`](examples/py-langchain) | LangChain + `OpenBoxRestateMiddleware` | `docker compose -f examples/py-langchain/docker-compose.yml up` |
 | [`examples/py-openai-agents`](examples/py-openai-agents) | OpenAI Agents SDK + `govern_agent` | `docker compose -f examples/py-openai-agents/docker-compose.yml up` |
 
 The multi-agent example also needs the child agent's credentials in `.env`: `CHILD_OPENBOX_API_KEY`, `CHILD_OPENBOX_AGENT_DID` and `CHILD_OPENBOX_AGENT_PRIVATE_KEY`.

@@ -273,4 +273,6 @@ async def oai_run(_ctx: restate.Context, script: str) -> str:
     return str(result.final_output)
 
 
-app = restate.app(services=[agent, spans, oai_spans, *P2_SERVICES])
+from .p4_app import SERVICES as P4_SERVICES  # noqa: E402
+
+app = restate.app(services=[agent, spans, oai_spans, *P2_SERVICES, *P4_SERVICES])

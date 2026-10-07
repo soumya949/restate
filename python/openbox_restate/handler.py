@@ -20,7 +20,7 @@ from restate.exceptions import TerminalError
 from .approvals import wait_for_approval
 from .context import GovernanceContext, create_governance_context, reset_governance_context
 from .enforce import decide, details_of, redacted
-from .errors import GovernanceBlockedError, GovernanceHaltError
+from .errors import GovernanceBlockedError, GovernanceHaltError, OpenBoxRestateError
 from .events import (
     activity_started_event,
     error_info_of,
@@ -39,6 +39,18 @@ from .verdict_record import VerdictRecord
 F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
 
 _NO_INPUT = object()
+
+
+def _governance_error_in(err: BaseException) -> OpenBoxRestateError | None:
+    """The OpenBox governance error in ``err``'s cause/context chain, if any."""
+    seen: set[int] = set()
+    cur: BaseException | None = err
+    while cur is not None and id(cur) not in seen:
+        if isinstance(cur, OpenBoxRestateError):
+            return cur
+        seen.add(id(cur))
+        cur = cur.__cause__ or cur.__context__
+    return None
 
 
 def openbox_handler(
@@ -95,6 +107,11 @@ def openbox_handler(
                     except Exception as caught:
                         if g.halted:
                             raise halted_error(g) from caught
+                        # Frameworks wrap errors raised in their callbacks (ADK: RuntimeError), which
+                        # Restate would retry forever: surface our governance error as itself.
+                        governance_error = _governance_error_in(caught)
+                        if governance_error is not None and governance_error is not caught:
+                            raise governance_error from caught
                         raise
                     if g.halted:
                         raise halted_error(g)

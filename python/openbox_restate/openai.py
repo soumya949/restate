@@ -150,7 +150,7 @@ class _OpenBoxAgentHooks(AgentHooks[Any]):
         # set here would not reach the model call, the shared governance context does).
         aid, started_at = await llm_started(restate_context(), g, prompt)
         self._pending[g.workflow_id] = (aid, started_at)
-        g.llm_scope = llm_scope_info(g, aid)
+        g.active_scope = llm_scope_info(g, aid)
         if self._inner:
             await self._inner.on_llm_start(context, agent, system_prompt, input_items)
 
@@ -158,7 +158,7 @@ class _OpenBoxAgentHooks(AgentHooks[Any]):
         # Fires again on replay (the response comes from the journal); both llm steps are journaled,
         # so OpenBox still sees the call once.
         g = require_governance_context()
-        g.llm_scope = None
+        g.active_scope = None
         texts: list[str] = []
         has_tool_calls = False
         for item in response.output:

@@ -30,6 +30,13 @@ Issues = "https://github.com/soumya949/restate/issues"
 spans = ["openbox-sdk-python[http]>=1.4.0"]
 # OpenAI Agents SDK integration (openbox_restate.openai)
 openai = ["restate-sdk[openai]>=1.0.5"]
+# Google ADK integration (openbox_restate.adk)
+adk = ["restate-sdk[adk]>=1.0.5"]
+# Pydantic AI integration (openbox_restate.pydantic_ai)
+# restate.ext.pydantic imports pydantic_ai.mcp unconditionally, but restate-sdk's own extra omits [mcp].
+pydantic-ai = ["restate-sdk[pydantic_ai]>=1.0.5", "pydantic-ai-slim[mcp]>=2.0,<3"]
+# LangChain integration (openbox_restate.langchain)
+langchain = ["restate-sdk[langchain]>=1.0.5"]
 
 [dependency-groups]
 dev = [
@@ -39,7 +46,8 @@ dev = [
     "mypy>=1.18",
     "ruff>=0.6",
     "httpx>=0.28",
-    "restate-sdk[harness,serde,openai]>=1.0.5",
+    "restate-sdk[harness,serde,openai,adk,pydantic_ai,langchain]>=1.0.5",
+    "pydantic-ai-slim[mcp]>=2.0,<3",
     "openbox-sdk-python[http]>=1.4.0",
     "hypercorn",
 ]
