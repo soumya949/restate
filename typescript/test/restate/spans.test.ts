@@ -16,7 +16,7 @@ import * as clients from "@restatedev/restate-sdk-clients";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { OpenBoxRestate, governedRun, isBlocked, openboxHandler } from "../../src/index.js";
+import { OpenBoxRestate, governedLlmCall, governedRun, isBlocked, openboxHandler, reportLlmCall } from "../../src/index.js";
 import { enableOpenBoxSpans, type OpenBoxSpans } from "../../src/instrumentation.js";
 import { FakeCore, type LedgerEntry } from "../helpers/fake-core.js";
 
@@ -50,6 +50,33 @@ const agent = restate.service({
       async (ctx: restate.Context, tool: string) => {
         const r = await governedRun(ctx, tool, { input: { q: 1 }, toolCallId: "call_1" }, () => callApi(ctx, tool));
         return { blocked: isBlocked(r), result: r };
+      },
+      { runtime: rt, agentName: "span-agent" }
+    ),
+    // A model call whose provider HTTP request should become a span of its llm_call activity.
+    llm: openboxHandler(
+      async (ctx: restate.Context, prompt: string) =>
+        governedLlmCall(
+          ctx,
+          { prompt, model: "fake-llm" },
+          () => callApi(ctx, "llm"),
+          () => ({ model: "fake-llm", inputTokens: 3, outputTokens: 2, completion: "hi" })
+        ),
+      { runtime: rt, agentName: "span-agent" }
+    ),
+    // After-the-fact report (no spans), then a model call that fails.
+    llmReportAndFail: openboxHandler(
+      async (ctx: restate.Context) => {
+        await reportLlmCall(ctx, { model: "m1", prompt: "p", completion: "c", inputTokens: 4, outputTokens: 1, hasToolCalls: true });
+        try {
+          await governedLlmCall(ctx, { prompt: "p2", model: "m2" }, () =>
+            ctx.run("failing model", () => {
+              throw new restate.TerminalError("model unavailable");
+            }), () => ({}));
+        } catch (e) {
+          return { failed: (e as Error).message };
+        }
+        return { failed: null };
       },
       { runtime: rt, agentName: "span-agent" }
     )
@@ -95,6 +122,32 @@ beforeEach(() => {
 });
 
 describe("span capture", () => {
+  it("an LLM call's provider request is a span of its llm_call activity, exactly once", async () => {
+    const c = clients.connect({ url: env.baseUrl() }).serviceClient(agent);
+    await (c as unknown as { llm: (p: string) => Promise<unknown> }).llm("hello");
+    expect(hits).toBe(1);
+    const llmStarted = core.evaluations("ActivityStarted", "llm_call").filter((e) => e.body["hook_trigger"] !== true);
+    expect(llmStarted).toHaveLength(1);
+    const spans = hookEvals("llm_call");
+    expect(stages(spans)).toEqual(["started", "completed"]);
+    for (const h of spans) expect(h.activityId).toBe(llmStarted[0]!.activityId);
+    const done = core.evaluations("ActivityCompleted", "llm_call");
+    expect(done).toHaveLength(1);
+    expect(done[0]!.body["activity_output"]).toMatchObject({ llm_model: "fake-llm", total_tokens: 5 });
+    expect(done[0]!.body["duration_ms"]).toEqual(expect.any(Number));
+  });
+
+  it("reportLlmCall sends one step after the fact; a failing model call is reported as failed", async () => {
+    const c = clients.connect({ url: env.baseUrl() }).serviceClient(agent);
+    const out = await (c as unknown as { llmReportAndFail: (x: null) => Promise<{ failed: string | null }> }).llmReportAndFail(null);
+    expect(out.failed).toMatch(/model unavailable/);
+    const done = core.evaluations("ActivityCompleted", "llm_call");
+    expect(done).toHaveLength(2);
+    expect(done[0]!.body["activity_output"]).toMatchObject({ llm_model: "m1", total_tokens: 5, has_tool_calls: true });
+    expect(done[1]!.body["status"]).toBe("failed");
+    expect(JSON.stringify(done[1]!.body["error"])).toContain("model unavailable");
+  });
+
   it("installs fetch + http/https", () => {
     expect(spans.installedTargets).toEqual(expect.arrayContaining(["fetch", "http", "https"]));
   });

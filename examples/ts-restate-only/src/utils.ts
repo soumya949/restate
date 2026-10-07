@@ -16,7 +16,10 @@ export async function callLLM(prompt: ModelMessage[], tools?: Record<string, any
     text: response.text,
     toolCalls: response.toolCalls,
     finishReason: response.finishReason,
-    messages: response.response.messages
+    messages: response.response.messages,
+    // For OpenBox's Model Usage (reportLlmCall): journaled with the response.
+    model: response.response.modelId,
+    usage: { inputTokens: response.usage.inputTokens ?? null, outputTokens: response.usage.outputTokens ?? null }
   };
 }
 

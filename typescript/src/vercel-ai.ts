@@ -17,14 +17,17 @@
  * error, so the agent can explain it or try something else.
  *
  * The only module that imports `ai` (types only); kept off the package root.
+ * Also exports `openboxLlmTelemetry(ctx)`, a model middleware that reports LLM calls.
  */
 
 import type * as restate from "@restatedev/restate-sdk";
-import type { ToolExecutionOptions, ToolSet } from "ai";
+import type { LanguageModelMiddleware, ToolExecutionOptions, ToolSet } from "ai";
 
 import { getGovernanceContext } from "./context.js";
 import { OpenBoxContractError } from "./errors.js";
-import { governedRun, type GovernedRunOptions } from "./governed-run.js";
+import { governedRun, haltedError, type GovernedRunOptions } from "./governed-run.js";
+import { governedLlmCall } from "./llm.js";
+
 
 export interface GovernToolsOptions {
   /** Semantic event type per tool name (`EMAIL_SEND`, `DATABASE_WRITE`, …). */
@@ -108,4 +111,60 @@ export function governTools<T extends ToolSet>(ctx: restate.Context, tools: T, o
     };
   }
   return out as T;
+}
+
+/** Text of the latest user turn in an AI SDK prompt. */
+function latestUserText(prompt: ReadonlyArray<{ role: string; content: unknown }>): string | null {
+  for (let i = prompt.length - 1; i >= 0; i--) {
+    const m = prompt[i]!;
+    if (m.role !== "user") continue;
+    if (typeof m.content === "string") return m.content;
+    if (Array.isArray(m.content)) {
+      const text = m.content
+        .map((p: { type?: string; text?: string }) => (p.type === "text" ? p.text : undefined))
+        .filter((t): t is string => typeof t === "string")
+        .join(" ");
+      return text || null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Report every model call to OpenBox as an `llm_call` activity (model, tokens,
+ * completion): feeds Model Usage, Cost and "LLM Calls". Telemetry only.
+ *
+ * Put it BEFORE `durableCalls` so it wraps the journaled call (on replay the
+ * response comes from the journal and the report step is not re-sent):
+ *
+ * ```ts
+ * wrapLanguageModel({ model, middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx)] })
+ * ```
+ */
+export function openboxLlmTelemetry(ctx: restate.Context): LanguageModelMiddleware {
+  return {
+    wrapGenerate: async ({ doGenerate, params, model }) => {
+      // After a HALT the AI SDK would still call the model again (it turns the tool's error into a
+      // tool result). The session is over: stop before spending an ungoverned LLM call.
+      const g = getGovernanceContext(ctx);
+      if (g?.halted) throw haltedError(g);
+      const prompt = latestUserText(params.prompt as ReadonlyArray<{ role: string; content: unknown }>);
+      // The model's HTTP request runs inside the llm_call activity: with spans enabled, the POST to the
+      // provider appears as its span. doGenerate is journaled by durableCalls (inside this middleware).
+      return governedLlmCall(ctx, { prompt, model: model.modelId }, async () => await doGenerate(), (result) => {
+        const content = result.content as ReadonlyArray<{ type: string; text?: string }>;
+        const completion = content
+          .filter((c) => c.type === "text" && typeof c.text === "string")
+          .map((c) => c.text as string)
+          .join("");
+        return {
+          model: model.modelId,
+          completion: completion || null,
+          inputTokens: result.usage.inputTokens.total ?? null,
+          outputTokens: result.usage.outputTokens.total ?? null,
+          hasToolCalls: content.some((c) => c.type === "tool-call")
+        };
+      });
+    }
+  };
 }

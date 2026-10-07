@@ -10,6 +10,13 @@ export default defineConfig({
     // Restate integration tests share one Restate container per file and are slow to boot.
     testTimeout: 60_000,
     hookTimeout: 180_000,
-    fileParallelism: false
+    fileParallelism: false,
+    // Floors from the LangChain TS adapter (architecture §19); enforced by `npm run test:coverage` / ci:check.
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      reporter: ["text-summary", "lcov"],
+      thresholds: { branches: 70, functions: 90, lines: 75, statements: 75 }
+    }
   }
 });

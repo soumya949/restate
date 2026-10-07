@@ -8,11 +8,12 @@
  *      for human approval → run → report), and a blocked call is fed back to
  *      the LLM as the tool result instead of crashing the agent.
  *   3. `enableOpenBoxSpans()` reports the HTTP calls each tool makes as spans
+ *   4. `governedLlmCall` reports each LLM call (model, tokens, and its HTTP request as a span)
  *      of that tool's activity (each span also gets a verdict).
  */
 import { existsSync } from "node:fs";
 
-import { governedCall, isBlocked, openboxHandler } from "@openbox-ai/openbox-restate-sdk"; // OPENBOX
+import { governedCall, governedLlmCall, isBlocked, openboxHandler } from "@openbox-ai/openbox-restate-sdk"; // OPENBOX
 import { enableOpenBoxSpans } from "@openbox-ai/openbox-restate-sdk/instrumentation"; // OPENBOX
 import * as restate from "@restatedev/restate-sdk";
 import { tool, type ModelMessage } from "ai";
@@ -81,6 +82,7 @@ async function fetchWeather(city: string) {
   return { city: place.name, ...wx.current };
 }
 
+// <start_here>
 // AGENT
 const run = openboxHandler( // OPENBOX
   async (ctx: restate.Context, { message }: { message: string }) => {
@@ -90,7 +92,18 @@ const run = openboxHandler( // OPENBOX
     ];
 
     while (true) {
-      const result = await ctx.run("LLM call", async () => await callLLM(messages, tools), { maxRetryAttempts: 3 });
+      const result = await governedLlmCall( // OPENBOX
+        ctx,
+        { prompt: message },
+        () => ctx.run("LLM call", async () => await callLLM(messages, tools), { maxRetryAttempts: 3 }),
+        (r) => ({
+          model: r.model,
+          completion: r.text || null,
+          inputTokens: r.usage.inputTokens,
+          outputTokens: r.usage.outputTokens,
+          hasToolCalls: r.toolCalls.length > 0
+        })
+      );
       messages.push(...result.messages);
       if (result.finishReason !== "tool-calls") return result.text;
 
@@ -105,6 +118,8 @@ const run = openboxHandler( // OPENBOX
   },
   { agentName: "restate-only-agent", promptFrom: (input) => input.message } // OPENBOX
 );
+
+// <end_here>
 
 const agentService = restate.service({
   name: "agent",

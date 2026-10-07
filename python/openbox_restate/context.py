@@ -47,6 +47,9 @@ class GovernanceContext:
     name_counters: dict[str, int] = field(default_factory=dict)
     used_activity_ids: set[str] = field(default_factory=set)
     vobj_warning_logged: bool = False
+    #: The llm_call activity whose model request is in flight (a SpanScopeInfo), set by framework hooks that
+    #: cannot wrap the call itself (OpenAI Agents SDK). Span capture falls back to it outside governed tools.
+    llm_scope: Any = None
 
 
 _current: contextvars.ContextVar[GovernanceContext | None] = contextvars.ContextVar(

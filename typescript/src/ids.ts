@@ -40,5 +40,8 @@ export const stepNames = {
   post: (activityId: string) => `openbox:post:${activityId}`,
   postFailed: (activityId: string) => `openbox:post-failed:${activityId}`,
   approvalPoll: (key: string, n: number) => `openbox:approval-poll:${key}:${n}`,
-  approvalWait: (key: string, n: number) => `openbox:approval-wait:${key}:${n}`
+  approvalWait: (key: string, n: number) => `openbox:approval-wait:${key}:${n}`,
+  llm: (activityId: string) => `openbox:llm:${activityId}`,
+  llmPre: (activityId: string) => `openbox:llm-pre:${activityId}`,
+  llmPost: (activityId: string) => `openbox:llm-post:${activityId}`
 } as const;

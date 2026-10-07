@@ -50,3 +50,15 @@ class StepNames:
     @staticmethod
     def approval_wait(key: str, n: int) -> str:
         return f"openbox:approval-wait:{key}:{n}"
+
+    @staticmethod
+    def llm(activity_id: str) -> str:
+        return f"openbox:llm:{activity_id}"
+
+    @staticmethod
+    def llm_pre(activity_id: str) -> str:
+        return f"openbox:llm-pre:{activity_id}"
+
+    @staticmethod
+    def llm_post(activity_id: str) -> str:
+        return f"openbox:llm-post:{activity_id}"

@@ -76,7 +76,7 @@ def openbox_handler(
                 #    in one journaled step.
                 prompt = prompt_from(input) if prompt_from else None
 
-                def start_events() -> list[EventEnvelope]:
+                def start_events(_now: int) -> list[EventEnvelope]:
                     hand = handoff_event(g)
                     return [
                         workflow_started_event(g, StepNames.start, input, capture_input),
@@ -87,13 +87,21 @@ def openbox_handler(
                 start = await evaluate_step(ctx, g, StepNames.start, start_events)
                 await _enforce_lifecycle(ctx, g, start, input, "start")
 
-                # 2. User code. A HALT that user code (or a framework) caught and swallowed still
-                #    ends the session, reported as failed.
+                # 2. User code. A HALT that user code (or a framework) caught, swallowed or wrapped
+                #    still ends the invocation with the original HALT.
                 try:
-                    output = await fn(ctx, *args)
+                    try:
+                        output = await fn(ctx, *args)
+                    except Exception as caught:
+                        if g.halted:
+                            raise halted_error(g) from caught
+                        raise
                     if g.halted:
                         raise halted_error(g)
                 except TerminalError as err:
+                    if isinstance(err, GovernanceHaltError):
+                        # Core closed the session on HALT ("Session is no longer active"): nothing more to report.
+                        raise
                     err_info = error_info_of(err)
                     await best_effort(
                         "WorkflowFailed",
@@ -101,7 +109,7 @@ def openbox_handler(
                             ctx,
                             g,
                             StepNames.end_failed,
-                            lambda: [workflow_failed_event(g, StepNames.end_failed, err_info)],
+                            lambda _now: [workflow_failed_event(g, StepNames.end_failed, err_info)],
                         ),
                     )
                     raise
@@ -109,7 +117,10 @@ def openbox_handler(
 
                 # 3. End: output guardrails may redact or block the returned value.
                 end = await evaluate_step(
-                    ctx, g, StepNames.end, lambda: [workflow_completed_event(g, StepNames.end, output, capture_output)]
+                    ctx,
+                    g,
+                    StepNames.end,
+                    lambda _now: [workflow_completed_event(g, StepNames.end, output, capture_output)],
                 )
                 await _enforce_lifecycle(ctx, g, end, output, "end")
                 return redacted(end, output, "output")
@@ -148,7 +159,7 @@ async def _approval_gate(
         ctx,
         g,
         step,
-        lambda: [activity_started_event(g, step, activity_id=aid, activity_type=activity_type, input=payload)],
+        lambda _now: [activity_started_event(g, step, activity_id=aid, activity_type=activity_type, input=payload)],
     )
     d = decide(gate, g.rt.config.restate.hitl_enabled)
     if d.kind == "halt":

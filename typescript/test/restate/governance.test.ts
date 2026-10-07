@@ -263,6 +263,8 @@ describe("governed step (P0)", () => {
     expect(core.evaluations("SignalReceived")).toHaveLength(1);
     expect(core.evaluations("ActivityStarted", "get_weather")).toHaveLength(1);
     expect(core.evaluations("ActivityCompleted", "get_weather")).toHaveLength(1);
+    // Latency for the dashboard, from journaled timestamps (identical on every replay).
+    expect(core.evaluations("ActivityCompleted", "get_weather")[0]!.body["duration_ms"]).toEqual(expect.any(Number));
     expect(core.evaluations("WorkflowCompleted")).toHaveLength(1);
 
     const started = core.evaluations("ActivityStarted", "get_weather")[0]!;
@@ -291,13 +293,14 @@ describe("governed step (P0)", () => {
     expect(core.evaluations("ActivityCompleted", "delete_db")).toHaveLength(0);
   });
 
-  it("7: HALT fails the invocation, no later steps, WorkflowFailed reported", async () => {
+  it("7: HALT fails the invocation, no later steps, nothing sent after it", async () => {
     core.onActivity("wire_money", "ActivityStarted", { verdict: "halt", reason: "fraud pattern" });
     await expect(client.halt(null as never)).rejects.toThrow(/OpenBox HALT: fraud pattern/);
     expect(counters.tool).toBe(0);
     expect(core.evaluations("ActivityStarted", "get_weather")).toHaveLength(0);
-    expect(core.evaluations("WorkflowFailed")).toHaveLength(1);
-    expect(core.evaluations("WorkflowFailed")[0]!.body["error"]).toMatchObject({ type: "GovernanceHaltError" });
+    // Core closes the session on HALT and answers anything later with "Session is no longer active".
+    expect(core.evaluations("WorkflowFailed")).toHaveLength(0);
+    expect(core.evaluations("WorkflowCompleted")).toHaveLength(0);
   });
 
   it("8: output guardrail redaction replaces the result", async () => {

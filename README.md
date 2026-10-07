@@ -10,10 +10,8 @@ When a policy needs human approval, the invocation **suspends durably** until a 
 
 | Package | Path | Status |
 |---|---|---|
-| `@openbox-ai/openbox-restate-sdk` (TypeScript) | [`typescript/`](typescript) | P0–P2 done |
-| `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P0–P2 done |
-
-Design docs: [`../openbox-restate-sdk-prd.md`](../openbox-restate-sdk-prd.md) and [`../architecture.md`](../architecture.md). Section numbers in code comments (§x.y) refer to `architecture.md`.
+| `@openbox-ai/openbox-restate-sdk` (TypeScript) | [`typescript/`](typescript) | P0–P3 done (not yet published) |
+| `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P0–P3 done (not yet published) |
 
 ## How it works
 
@@ -98,6 +96,20 @@ async def run(_ctx: restate.Context, req: Prompt) -> str:
 
 **Parallel tool calls** (`governedParallel` / `governed_parallel`): the pre-checks run one at a time in call order, the tools run concurrently, then the post-checks run in call order. This keeps the journal deterministic.
 
+## LLM calls (Model Usage, Cost, "LLM Calls")
+
+Each model call can be reported as an `llm_call` activity carrying the model, the token counts and the completion. This is telemetry only: it is never enforced, and it is sent in one journaled step, so a replay never double-counts it.
+
+| Where | How |
+|---|---|
+| Vercel AI SDK | `wrapLanguageModel({ model, middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx)] })`. Put it before `durableCalls`. |
+| OpenAI Agents SDK | Automatic: `govern_agent` adds agent hooks, chained with any hooks you already have |
+| Raw loops | Wrap the journaled LLM call: `governedLlmCall(ctx, { prompt }, () => ctx.run(...), describe)` / `governed_llm_call(ctx, call, describe, prompt=...)`. (`reportLlmCall` / `report_llm_call` reports after the fact, without spans.) |
+
+With span capture on, the model provider's HTTP request appears as a span of its `llm_call`. The `llm_call` is started before the request, the same way as a governed tool.
+
+Governed tools also send `duration_ms` on `ActivityCompleted`, which OpenBox shows as latency. It is measured from journaled timestamps, starting after any approval wait.
+
 ## Multi-agent
 
 A parent agent calls a child agent over Restate RPC with `governedSubAgent` / `governed_sub_agent`:
@@ -178,6 +190,7 @@ The TypeScript examples install the SDK from a packed tarball, as a real install
 | [`examples/ts-restate-only`](examples/ts-restate-only) | raw agent loop + `governedCall` | `npm install && npm start`, register `localhost:9080` |
 | [`examples/ts-vercel-ai`](examples/ts-vercel-ai) | Vercel AI SDK + `governTools` | `npm install && npm start`, register `localhost:9081` |
 | [`examples/ts-multi-agent`](examples/ts-multi-agent) | lead → research over RPC, two OpenBox agents | `npm run start:research` and `npm run start:lead`, register `:9083` and `:9082` |
+| [`examples/ts-journal-encryption`](examples/ts-journal-encryption) | encrypted journal (incl. verdict records) | `npm install && npm start`, then `npm run call` |
 | [`examples/py-restate-only`](examples/py-restate-only) | raw agent loop + `governed_call` | `docker compose -f examples/py-restate-only/docker-compose.yml up` |
 | [`examples/py-openai-agents`](examples/py-openai-agents) | OpenAI Agents SDK + `govern_agent` | `docker compose -f examples/py-openai-agents/docker-compose.yml up` |
 
@@ -188,6 +201,13 @@ Each single-agent example has four tools, one per sandbox policy:
 - `delete_records`: BLOCK
 - `wire_money`: HALT
 - `send_email`: REQUIRE_APPROVAL. Approve or reject it in the OpenBox dashboard and the agent resumes.
+
+## Security
+
+- **Keys.** API keys and private keys are read once into the process-wide client. They are never journaled, logged or forwarded to child agents.
+- **What is journaled.** Only verdict and approval records, plus guardrail-redacted values (already redacted). For an encrypted journal, use Restate's `journalValueCodecProvider`; see [`examples/ts-journal-encryption`](examples/ts-journal-encryption). Callers then need the same codec.
+- **Audit.** `openboxAuditHook()` (TypeScript) reports `ctx.run` side effects made outside governed tools. It is audit only and never blocks.
+- **Reporting vulnerabilities.** See [`SECURITY.md`](SECURITY.md).
 
 ## Troubleshooting
 

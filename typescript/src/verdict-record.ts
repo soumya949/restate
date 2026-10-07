@@ -26,6 +26,8 @@ export interface VerdictRecord {
   approvalExpirationTime: string | null;
   guardrails: GuardrailsRecord | null;
   fallbackUsed: boolean;
+  /** Epoch ms when the step ran, captured inside the journaled closure (absent in pre-0.1 journals). */
+  at?: number;
 }
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "poll_failed";
@@ -34,6 +36,8 @@ export interface ApprovalRecord {
   v: 1;
   status: ApprovalStatus;
   reason: string | null;
+  /** Epoch ms of the poll, captured inside the journaled closure. */
+  at?: number;
 }
 
 const VERDICTS: readonly VerdictValue[] = ["allow", "constrain", "require_approval", "block", "halt"];

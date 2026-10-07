@@ -1425,6 +1425,7 @@ dev = [
     { name = "openbox-sdk-python", extras = ["http"], specifier = ">=1.4.0" },
     { name = "pytest", specifier = ">=8.2" },
     { name = "pytest-asyncio", specifier = ">=0.26" },
+    { name = "pytest-cov", specifier = ">=6.0" },
     { name = "restate-sdk", extras = ["harness", "serde", "openai"], specifier = ">=1.0.5" },
     { name = "ruff", specifier = ">=0.6" },
 ]

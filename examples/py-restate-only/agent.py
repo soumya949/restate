@@ -22,6 +22,16 @@ from litellm.types.utils import Message
 from pydantic import BaseModel
 
 from openbox_restate import governed_call, is_blocked, openbox_handler  # OPENBOX
+from openbox_restate.llm import governed_llm_call, llm_output  # OPENBOX
+
+
+class LlmResult(BaseModel):
+    """The journaled LLM step: the message plus what OpenBox's Model Usage needs."""
+
+    message: Message
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class Prompt(BaseModel):
@@ -87,6 +97,7 @@ TOOLS = [
     _fn("wire_money", "Wire money to an account", {"account": {"type": "string"}, "amount": {"type": "number"}}, ["account", "amount"]),
 ]
 
+# <start_here>
 agent_service = restate.Service("agent")
 
 
@@ -101,11 +112,30 @@ async def run(ctx: restate.Context, prompt: Prompt) -> str | None:
 
     while True:
 
-        async def call_llm() -> Message:
+        async def call_llm() -> LlmResult:
             resp = await acompletion(model=os.environ.get("OPENAI_MODEL", "gpt-5.4"), messages=messages, tools=TOOLS)
-            return resp.choices[0].message  # type: ignore[no-any-return]
+            usage = getattr(resp, "usage", None)
+            return LlmResult(
+                message=resp.choices[0].message,
+                model=resp.model,
+                input_tokens=getattr(usage, "prompt_tokens", None),
+                output_tokens=getattr(usage, "completion_tokens", None),
+            )
 
-        response = await ctx.run_typed("LLM call", call_llm)
+        # OPENBOX: an llm_call activity around the journaled call (its HTTP request becomes a span)
+        llm = await governed_llm_call(
+            ctx,
+            lambda: ctx.run_typed("LLM call", call_llm),
+            lambda r: llm_output(
+                model=r.model,
+                completion=r.message.content,
+                input_tokens=r.input_tokens,
+                output_tokens=r.output_tokens,
+                has_tool_calls=bool(r.message.tool_calls),
+            ),
+            prompt=prompt.message,
+        )
+        response = llm.message
         messages.append(response.model_dump())
         if not response.tool_calls:
             return response.content  # type: ignore[no-any-return]
@@ -126,3 +156,4 @@ async def run(ctx: restate.Context, prompt: Prompt) -> str | None:
             )
             content = str(result) if is_blocked(result) else result
             messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": content})
+# <end_here>

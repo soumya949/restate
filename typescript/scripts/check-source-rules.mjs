@@ -6,7 +6,8 @@
  *  - P2 never bypass the base client: no raw "/api/v" paths, no X-OpenBox-* signing
  *    header literals (CopilotKit's check-no-duplicate-signing rule).
  *  - I1 Core I/O only in steps.ts (and API-key validation in runtime.ts). instrumentation.ts is
- *    allowed: span I/O only ever runs inside the tool's own ctx.run closure.
+ *    allowed: span I/O only ever runs inside the tool's own ctx.run closure. hooks.ts is
+ *    allowed: the audit hook is fire-and-forget, audit only, and only runs for executed runs.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,13 +17,18 @@ const files = readdirSync(SRC).filter((f) => f.endsWith(".ts"));
 
 const rules = [
   { re: /\brandomUUID\s*\(|\bMath\.random\s*\(/, msg: "non-deterministic id source (use ids.ts / ctx.rand)" },
-  { re: /\bDate\.now\s*\(|\bnew Date\s*\(/, msg: "wall clock in control flow (use ctx.date.now())" },
+  {
+    re: /\bDate\.now\s*\(|\bnew Date\s*\(/,
+    msg: "wall clock in control flow (use ctx.date.now())",
+    // steps.ts reads it only inside journaled ctx.run closures (timestamps on verdict/approval records).
+    allow: ["steps.ts"]
+  },
   { re: /["'`]\/api\/v\d/, msg: "raw OpenBox API path (use the base OpenBoxClient)" },
   { re: /x-openbox-(agent-(did|timestamp|nonce|signature|assertion)|sdk-version|body-sha256|workload-token)/i, msg: "signing header literal (base SDK owns signing)" },
   {
     re: /\.(evaluate|pollApproval|sendHandoff)\s*\(/,
     msg: "OpenBox Core I/O outside steps.ts",
-    allow: ["steps.ts", "instrumentation.ts"]
+    allow: ["steps.ts", "instrumentation.ts", "hooks.ts"]
   }
 ];
 

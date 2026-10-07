@@ -14,7 +14,7 @@ import { ApprovalExpiredError, ApprovalRejectedError, OpenBoxUnavailableError } 
 import { detailsOf } from "./enforce.js";
 import { stepNames } from "./ids.js";
 import { pollStep } from "./steps.js";
-import type { VerdictRecord } from "./verdict-record.js";
+import type { ApprovalRecord, VerdictRecord } from "./verdict-record.js";
 
 export function nextIntervalMs(cfg: GovernanceContext["rt"]["config"]["restate"], n: number): number {
   const raw = cfg.approvalPollIntervalMs * Math.pow(cfg.approvalPollBackoff, n);
@@ -22,7 +22,8 @@ export function nextIntervalMs(cfg: GovernanceContext["rt"]["config"]["restate"]
 }
 
 /**
- * Wait for a human decision on `activityId`. Returns when approved; throws
+ * Wait for a human decision on `activityId`. Returns the approving record (null when an outage
+ * was waved through by approvalOutagePolicy=fail_open); throws
  * ApprovalRejectedError / ApprovalExpiredError / OpenBoxUnavailableError.
  *
  * `stepKey` distinguishes several waits on the same activity (e.g. a post-
@@ -34,7 +35,7 @@ export async function waitForApproval(
   activityId: string,
   verdict: VerdictRecord,
   stepKey: string = activityId
-): Promise<void> {
+): Promise<ApprovalRecord | null> {
   const cfg = g.rt.config.restate;
   const details = detailsOf(verdict);
 
@@ -54,7 +55,7 @@ export async function waitForApproval(
     const rec = await pollStep(ctx, g, stepNames.approvalPoll(stepKey, n), activityId);
     switch (rec.status) {
       case "approved":
-        return;
+        return rec;
       case "rejected":
         throw new ApprovalRejectedError(rec.reason ?? "rejected by reviewer", details);
       case "expired":
@@ -66,7 +67,7 @@ export async function waitForApproval(
             ctx.console.warn(
               `OpenBox: approval status unavailable after ${failures} polls; approvalOutagePolicy=fail_open, proceeding`
             );
-            return;
+            return null;
           }
           throw new OpenBoxUnavailableError(`approval status unavailable after ${failures} consecutive polls`, details);
         }

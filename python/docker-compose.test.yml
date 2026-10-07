@@ -35,7 +35,7 @@ services:
       sh -c "uv sync --quiet &&
              uv run ruff check openbox_restate tests &&
              uv run mypy openbox_restate &&
-             uv run pytest -q ${PYTEST_ARGS:-}"
+             uv run pytest -q --cov=openbox_restate --cov-report=term --cov-report=xml:coverage.xml --cov-fail-under=75 ${PYTEST_ARGS:-}"
 
 volumes:
   uv-cache:

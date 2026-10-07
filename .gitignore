@@ -30,3 +30,8 @@ Thumbs.db
 
 # packed SDK tarballs for the examples (npm run pack:examples)
 examples/.packs/
+coverage.xml
+.coverage
+
+# design docs, runbook and docs-site draft: kept local, not in git
+docs/

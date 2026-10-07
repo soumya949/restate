@@ -140,10 +140,14 @@ def activity_completed_event(
     status: str,
     result: Any = None,
     error: dict[str, Any] | None = None,
+    duration_ms: int | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> EventEnvelope:
-    more: dict[str, Any] = {"status": status}
+    more: dict[str, Any] = {**(extra or {}), "status": status}
     if status == "completed":
         more["activity_output"] = to_json(result)
+    if duration_ms is not None:
+        more["duration_ms"] = max(0, duration_ms)  # Core shows it as latency
     return activity_completed(
         activity_id=activity_id,
         activity_type=activity_type,

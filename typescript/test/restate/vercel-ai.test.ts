@@ -14,7 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { OpenBoxRestate, openboxHandler } from "../../src/index.js";
-import { governTools } from "../../src/vercel-ai.js";
+import { governTools, openboxLlmTelemetry } from "../../src/vercel-ai.js";
 import { FakeCore } from "../helpers/fake-core.js";
 
 const core = new FakeCore();
@@ -35,8 +35,8 @@ type Call = { id: string; name: string; input: Record<string, unknown> };
 /** A model that asks for `calls` on its first step and answers with text once it has tool results. */
 function mockModel(calls: Call[]) {
   const usage = {
-    inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
-    outputTokens: { total: 1, text: 1, reasoning: 0 }
+    inputTokens: { total: 12, noCache: 12, cacheRead: 0, cacheWrite: 0 },
+    outputTokens: { total: 5, text: 5, reasoning: 0 }
   };
   return new MockLanguageModelV4({
     doGenerate: async (options) => {
@@ -74,7 +74,10 @@ const agent = restate.service({
   handlers: {
     run: openboxHandler(
       async (ctx: restate.Context, { script }: { script: string }) => {
-        const model = wrapLanguageModel({ model: mockModel(scripts[script]!), middleware: durableCalls(ctx, { maxRetryAttempts: 3 }) });
+        const model = wrapLanguageModel({
+          model: mockModel(scripts[script]!),
+          middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx, { maxRetryAttempts: 3 })]
+        });
         const { text } = await generateText({
           model,
           prompt: `run ${script}`,
@@ -88,6 +91,8 @@ const agent = restate.service({
                   return { city, temperature: 23 };
                 })
             }),
+            // Client-side tool (no execute): passed through ungoverned, with a warning.
+            askUser: tool({ description: "ask the user", inputSchema: z.object({ q: z.string() }) }),
             deleteRecords: tool({
               description: "delete",
               inputSchema: z.object({ table: z.string() }),
@@ -135,6 +140,25 @@ describe("governTools (Vercel AI SDK)", () => {
     expect(core.evaluations("ActivityCompleted", "getWeather")).toHaveLength(1);
     expect(core.evaluations("WorkflowStarted")).toHaveLength(1);
     expect(core.evaluations("WorkflowCompleted")).toHaveLength(1);
+    expect(warnings.some((w) => w.includes('"askUser" has no execute'))).toBe(true);
+  });
+
+  it("reports each model call once as an llm_call activity with model and tokens (despite replays)", async () => {
+    await run("weather");
+    const started = core.evaluations("ActivityStarted", "llm_call");
+    const completed = core.evaluations("ActivityCompleted", "llm_call");
+    // Two model calls: one asking for the tool, one answering with its result.
+    expect(started).toHaveLength(2);
+    expect(completed).toHaveLength(2);
+    expect(started[0]!.body["activity_input"]).toEqual([{ prompt: "run weather" }]);
+    expect(completed[0]!.body["activity_output"]).toMatchObject({
+      llm_model: "mock-model-id",
+      input_tokens: 12,
+      output_tokens: 5,
+      total_tokens: 17,
+      has_tool_calls: true
+    });
+    expect(completed[1]!.body["activity_output"]).toMatchObject({ has_tool_calls: false, completion: expect.stringContaining("Paris") });
   });
 
   it("BLOCK goes back to the model as the tool result; the tool never runs", async () => {
@@ -150,7 +174,9 @@ describe("governTools (Vercel AI SDK)", () => {
     core.onActivity("deleteRecords", "ActivityStarted", { verdict: "halt", reason: "fraud pattern" });
     await expect(run("wire")).rejects.toThrow(/OpenBox HALT: fraud pattern/);
     expect(ran).toEqual([]);
-    expect(core.evaluations("WorkflowFailed")).toHaveLength(1);
+    // Core already closed the session on HALT: nothing is sent after it, and the model is not called again.
+    expect(core.evaluations("WorkflowFailed")).toHaveLength(0);
+    expect(core.evaluations("ActivityStarted", "llm_call")).toHaveLength(1);
     expect(core.evaluations("WorkflowCompleted")).toHaveLength(0);
   });
 

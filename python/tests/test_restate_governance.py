@@ -36,6 +36,8 @@ async def test_3_allow_every_event_exactly_once(call: Any) -> None:
     assert started.body["workflow_type"] == "weather-agent"
     assert started.body["activity_input"] == ["Paris"]
     completed = core.evaluations("ActivityCompleted", "get_weather")[0]
+    # Latency for the dashboard, from journaled timestamps (identical on every replay).
+    assert isinstance(completed.body["duration_ms"], int) and completed.body["duration_ms"] >= 0
     # same wire field as the TypeScript package and the Temporal SDK
     assert completed.body["activity_output"] == {"city": "Paris", "temperature": 23}
 
@@ -58,15 +60,16 @@ async def test_6_block_returns_value_and_tool_never_runs(call: Any) -> None:
     assert core.evaluations("ActivityCompleted", "delete_db") == []
 
 
-async def test_7_halt_fails_invocation_and_reports(call: Any) -> None:
+async def test_7_halt_fails_invocation_and_sends_nothing_after(call: Any) -> None:
     core.on_activity("wire_money", "ActivityStarted", {"verdict": "halt", "reason": "fraud pattern"})
     r = await call("halt")
     assert r.status_code >= 400
     assert re.search("OpenBox HALT: fraud pattern", r.text)
     assert counters["tool"] == 0
     assert core.evaluations("ActivityStarted", "get_weather") == []
-    failed = core.evaluations("WorkflowFailed")
-    assert len(failed) == 1 and failed[0].body["error"]["type"] == "GovernanceHaltError"
+    # Core closes the session on HALT and answers anything later with "Session is no longer active".
+    assert core.evaluations("WorkflowFailed") == []
+    assert core.evaluations("WorkflowCompleted") == []
 
 
 async def test_8_output_redaction(call: Any) -> None:

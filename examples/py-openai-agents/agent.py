@@ -89,6 +89,7 @@ assistant = Agent(
 )
 
 
+# <start_here>
 # AGENT SERVICE
 agent_service = restate.Service("agent")
 
@@ -99,3 +100,4 @@ async def run(_ctx: restate.Context, req: Prompt) -> str:
     # Runner that persists the agent execution for recoverability
     result = await DurableRunner.run(govern_agent(assistant), req.message)  # OPENBOX: govern_agent(...)
     return str(result.final_output)
+# <end_here>

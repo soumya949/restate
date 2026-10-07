@@ -62,7 +62,7 @@ export async function evaluateStep(
   ctx: restate.Context,
   g: GovernanceContext,
   stepName: string,
-  build: () => EventEnvelope[]
+  build: (now: number) => EventEnvelope[]
 ): Promise<VerdictRecord> {
   const { rt } = g;
   try {
@@ -74,9 +74,11 @@ export async function evaluateStep(
         } catch (e) {
           tagOrRethrow(e);
         }
+        // Wall clock is safe here: it runs once, inside the journaled closure, and is replayed from the journal.
+        const now = Date.now();
         let events: EventEnvelope[];
         try {
-          events = build();
+          events = build(now);
         } catch (e) {
           throw taggedStepError("contract", e);
         }
@@ -99,7 +101,7 @@ export async function evaluateStep(
           }
           records.push(toRecord(result));
         }
-        return highestPriority(records);
+        return { ...highestPriority(records), at: now };
       },
       {
         maxRetryAttempts: rt.config.restate.governanceMaxRetries,
@@ -129,14 +131,15 @@ export async function pollStep(
       async (): Promise<ApprovalRecord> => {
         try {
           const res = await rt.client.pollApproval(g.workflowId, g.runId, activityId);
-          if (res === null) return { v: 1, status: "poll_failed", reason: null };
-          return toApprovalRecord(res);
+          const at = Date.now(); // inside the journaled closure (see evaluateStep)
+          if (res === null) return { v: 1, status: "poll_failed", reason: null, at };
+          return { ...toApprovalRecord(res), at };
         } catch (e) {
           if (isAuthRejection(e)) throw taggedStepError("auth", e);
           if (e instanceof ContractError) throw taggedStepError("contract", e);
           if (e instanceof OpenBoxConfigError && !(e instanceof OpenBoxNetworkError)) throw taggedStepError("contract", e);
           rt.logger.warn(`OpenBox approval poll failed: ${messageOf(e)}`);
-          return { v: 1, status: "poll_failed", reason: messageOf(e) };
+          return { v: 1, status: "poll_failed", reason: messageOf(e), at: Date.now() };
         }
       },
       { maxRetryAttempts: 1 }

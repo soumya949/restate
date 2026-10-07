@@ -20,6 +20,7 @@ import { activityIdFor } from "../../src/ids.js";
 import { classifyStepFailure, isAuthRejection } from "../../src/steps.js";
 import { highestPriority, toApprovalRecord, toRecord, type VerdictRecord } from "../../src/verdict-record.js";
 import { SDK_VERSION } from "../../src/version.js";
+import { OpenBoxRestate, createOpenBoxRestate, getDefaultRuntime, setDefaultRuntime } from "../../src/runtime.js";
 
 const env = { OPENBOX_API_URL: "https://core.example.com", OPENBOX_API_KEY: "obx_test_abc" };
 
@@ -186,5 +187,26 @@ describe("approval polling interval", () => {
   it("backs off and caps at 60s", () => {
     const cfg = { approvalPollIntervalMs: 15_000, approvalPollBackoff: 2, approvalPollMaxIntervalMs: 60_000 } as never;
     expect([0, 1, 2, 3].map((n) => nextIntervalMs(cfg, n))).toEqual([15_000, 30_000, 60_000, 60_000]);
+  });
+});
+
+describe("runtime", () => {
+  const opts = { apiUrl: "http://localhost:8787", apiKey: "obx_test_restatesdk", environ: {} };
+
+  it("createOpenBoxRestate builds a runtime from explicit options", () => {
+    const rt = createOpenBoxRestate(opts);
+    expect(rt).toBeInstanceOf(OpenBoxRestate);
+    expect(rt.config.base.apiUrl).toBe("http://localhost:8787");
+    expect(rt.spanBinder).toBeNull();
+    rt.close();
+  });
+
+  it("the default runtime is built once, lazily, and can be replaced (test hook)", () => {
+    const mine = createOpenBoxRestate(opts);
+    setDefaultRuntime(mine);
+    expect(getDefaultRuntime()).toBe(mine);
+    expect(getDefaultRuntime()).toBe(mine);
+    setDefaultRuntime(null);
+    mine.close();
   });
 });

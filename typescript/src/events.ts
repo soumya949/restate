@@ -112,11 +112,18 @@ export interface ActivityCompletedInit {
   result?: unknown;
   error?: ErrorInfo | null;
   status: "completed" | "failed";
+  extra?: Record<string, JsonValue> | undefined;
+  /** Tool execution time (Core shows it as latency), from journaled timestamps. */
+  durationMs?: number | undefined;
 }
 
 export function activityCompletedEvent(g: GovernanceContext, stepName: string, a: ActivityCompletedInit): EventEnvelope {
   return activityCompleted({
-    ...base(g, stepName, { status: a.status }),
+    ...base(g, stepName, {
+      ...(a.extra ?? {}),
+      status: a.status,
+      ...(a.durationMs !== undefined ? { duration_ms: Math.max(0, a.durationMs) } : {})
+    }),
     activityId: a.activityId,
     activityType: a.activityType,
     ...(a.status === "completed" ? { result: toJson(a.result) } : {}),

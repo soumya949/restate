@@ -52,9 +52,11 @@ async def test_http_call_reported_as_started_and_completed_spans_exactly_once(ca
 
 async def test_span_block_stops_the_call_and_returns_blocked(call: Any) -> None:
     core.rule(
-        lambda b: {"verdict": "block", "reason": "no deletes over HTTP"}
-        if b.get("hook_trigger") is True and b.get("activity_type") == "delete_records"
-        else None
+        lambda b: (
+            {"verdict": "block", "reason": "no deletes over HTTP"}
+            if b.get("hook_trigger") is True and b.get("activity_type") == "delete_records"
+            else None
+        )
     )
     r = await tool(call, "delete_records")
     assert r.status_code == 200, r.text
@@ -67,9 +69,11 @@ async def test_span_block_stops_the_call_and_returns_blocked(call: Any) -> None:
 
 async def test_span_halt_ends_the_invocation(call: Any) -> None:
     core.rule(
-        lambda b: {"verdict": "halt", "reason": "fraud"}
-        if b.get("hook_trigger") is True and b.get("activity_type") == "wire_money"
-        else None
+        lambda b: (
+            {"verdict": "halt", "reason": "fraud"}
+            if b.get("hook_trigger") is True and b.get("activity_type") == "wire_money"
+            else None
+        )
     )
     r = await tool(call, "wire_money")
     assert r.status_code == 403
@@ -94,11 +98,40 @@ async def test_approved_activity_spans_pass_the_same_approval_rule(call: Any) ->
 
 async def test_span_only_approval_on_unapproved_activity_fails_safe_as_block(call: Any) -> None:
     core.rule(
-        lambda b: {"verdict": "require_approval", "reason": "review uploads"}
-        if b.get("hook_trigger") is True and b.get("activity_type") == "upload"
-        else None
+        lambda b: (
+            {"verdict": "require_approval", "reason": "review uploads"}
+            if b.get("hook_trigger") is True and b.get("activity_type") == "upload"
+            else None
+        )
     )
     r = await tool(call, "upload")
     assert r.status_code == 200, r.text
     assert r.json()["blocked"] is True
     assert api_hits["n"] == 0
+
+
+async def test_llm_call_provider_request_is_a_span_of_the_llm_call(call: Any) -> None:
+    r = await call("spans/llm", "hello")
+    assert r.status_code == 200, r.text
+    assert api_hits["n"] == 1
+    started = [e for e in core.evaluations("ActivityStarted", "llm_call") if e.body.get("hook_trigger") is not True]
+    assert len(started) == 1
+    hooks = hook_evals("llm_call")
+    assert stages(hooks) == ["started", "completed"]
+    assert all(h.activity_id == started[0].activity_id for h in hooks)
+    done = core.evaluations("ActivityCompleted", "llm_call")
+    assert len(done) == 1 and done[0].body["activity_output"]["total_tokens"] == 5
+    assert isinstance(done[0].body["duration_ms"], int)
+
+
+async def test_openai_agents_model_requests_are_spans_of_their_llm_calls(call: Any) -> None:
+    r = await call("oaiSpans/oai_run", "span-weather")
+    assert r.status_code == 200, r.text
+    assert api_hits["n"] == 2  # two model calls, each one provider request, never repeated on replay
+    started = [e for e in core.evaluations("ActivityStarted", "llm_call") if e.body.get("hook_trigger") is not True]
+    assert len(started) == 2
+    hooks = hook_evals("llm_call")
+    assert stages(hooks) == ["started", "completed", "started", "completed"]
+    assert [h.activity_id for h in hooks] == [started[0].activity_id] * 2 + [started[1].activity_id] * 2
+    # The governed tool's own activity has no stray LLM spans.
+    assert hook_evals("get_weather") == []

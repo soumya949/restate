@@ -11,6 +11,7 @@ only tagged TerminalErrors (no retry) or plain exceptions (Restate retries);
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, NoReturn, cast
@@ -47,7 +48,7 @@ async def evaluate_step(
     ctx: restate.Context,
     g: GovernanceContext,
     step_name: str,
-    build: Callable[[], list[EventEnvelope]],
+    build: Callable[[int], list[EventEnvelope]],
 ) -> VerdictRecord:
     """Send one or more events in ONE journaled step; return the highest-priority VerdictRecord."""
     rt = g.rt
@@ -57,8 +58,10 @@ async def evaluate_step(
             await rt.ensure_validated()
         except Exception as e:  # noqa: BLE001
             _tag_or_raise(e)
+        # Wall clock is safe here: it runs once, inside the journaled action, and is replayed from the journal.
+        now = int(time.time() * 1000)  # noqa: TID251
         try:
-            events = build()
+            events = build(now)
         except Exception as e:  # noqa: BLE001
             raise tagged_step_error("contract", e) from None
         records: list[VerdictRecord] = []
@@ -72,7 +75,7 @@ async def evaluate_step(
                     "OpenBox unreachable for %s; fail_open fallback ALLOW (degraded): %s", step_name, result.reason
                 )
             records.append(to_record(result))
-        return dict(highest_priority(records))
+        return {**highest_priority(records), "at": now}
 
     options: RunOptions[dict[str, Any]] = RunOptions(
         max_attempts=rt.config.restate.governance_max_retries,
@@ -99,10 +102,11 @@ async def poll_step(ctx: restate.Context, g: GovernanceContext, step_name: str, 
             ):
                 _tag_or_raise(e)
             _log.warning("OpenBox approval poll failed: %s", e)
-            return {"v": 1, "status": "poll_failed", "reason": str(e)}
+            return {"v": 1, "status": "poll_failed", "reason": str(e), "at": int(time.time() * 1000)}  # noqa: TID251
+        at = int(time.time() * 1000)  # noqa: TID251  (inside the journaled action, see evaluate_step)
         if res is None:
-            return {"v": 1, "status": "poll_failed", "reason": None}
-        return dict(to_approval_record(res))
+            return {"v": 1, "status": "poll_failed", "reason": None, "at": at}
+        return {**to_approval_record(res), "at": at}
 
     try:
         run = cast(Any, ctx).run_typed

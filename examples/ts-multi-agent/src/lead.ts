@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 
 import { openai } from "@ai-sdk/openai";
 import { governedSubAgent, isBlocked, openboxHandler } from "@openbox-ai/openbox-restate-sdk";
+import { openboxLlmTelemetry } from "@openbox-ai/openbox-restate-sdk/vercel-ai";
 import * as restate from "@restatedev/restate-sdk";
 import { durableCalls } from "@restatedev/vercel-ai-middleware";
 import { generateText, stepCountIs, tool, wrapLanguageModel } from "ai";
@@ -21,6 +22,7 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const Research: ResearchApi = { name: "research" } as ResearchApi;
 
+// <start_here>
 const lead = restate.service({
   name: "lead",
   handlers: {
@@ -29,7 +31,7 @@ const lead = restate.service({
         const { text } = await generateText({
           model: wrapLanguageModel({
             model: openai(process.env["OPENAI_MODEL"] ?? "gpt-5.4"),
-            middleware: durableCalls(ctx, { maxRetryAttempts: 3 })
+            middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx, { maxRetryAttempts: 3 })]
           }),
           system: "You are a lead agent. Delegate research questions to the research agent, then answer.",
           prompt,
@@ -55,5 +57,7 @@ const lead = restate.service({
   },
   options: { onJournalMismatchErrors: "pause" }
 });
+
+// <end_here>
 
 restate.serve({ services: [lead], port: Number(process.env["PORT"] ?? 9082) });

@@ -14,6 +14,8 @@ import pytest_asyncio
 
 INGRESS = os.environ.get("RESTATE_INGRESS_URL", "http://localhost:8080")
 ADMIN = os.environ.get("RESTATE_ADMIN_URL", "http://localhost:9070")
+
+
 def _service_url() -> str:
     """URL Restate uses to reach this test process (container IP: `compose run` gets no DNS alias)."""
     if "SERVICE_URL" in os.environ:

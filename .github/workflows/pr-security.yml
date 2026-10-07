@@ -1,0 +1,114 @@
+# Security: Trivy (vulnerable dependencies + misconfiguration, HIGH/CRITICAL) and
+# Gitleaks (secrets in new commits). Results go to the Security tab as SARIF.
+name: PR Security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+concurrency:
+  group: pr-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: "8.30.0"
+  GITLEAKS_LINUX_X64_SHA256: "79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e"
+
+jobs:
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
+        with:
+          cache: true
+          version: v0.69.2
+
+      # Runtime and dev dependencies of both packages and the examples, plus IaC misconfiguration.
+      - name: Scan
+        id: scan
+        continue-on-error: true
+        run: |
+          trivy fs . --scanners vuln,misconfig --ignore-unfixed --severity HIGH,CRITICAL \
+            --include-dev-deps --skip-dirs refs --format table --exit-code 1
+
+      - name: SARIF
+        if: always()
+        run: |
+          trivy fs . --scanners vuln,misconfig --ignore-unfixed --severity HIGH,CRITICAL \
+            --include-dev-deps --skip-dirs refs --format sarif --output trivy.sarif --exit-code 0
+
+      - name: Upload to the Security tab
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+      - name: Fail on findings
+        if: always() && steps.scan.outcome == 'failure'
+        run: |
+          echo "::error::Trivy found HIGH/CRITICAL issues (see the table above or the Security tab)."
+          exit 1
+
+  gitleaks:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Gitleaks
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}" -o "${archive}"
+          echo "${GITLEAKS_LINUX_X64_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+
+      # PRs: only the PR's commits. Pushes: only the pushed commits. Manual runs: full history.
+      - name: Scan
+        id: scan
+        continue-on-error: true
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          log_opts="--all"
+          if [[ "${EVENT}" == "pull_request" && -n "${PR_BASE}" ]]; then
+            log_opts="${PR_BASE}..HEAD"
+          elif [[ "${EVENT}" == "push" && -n "${PUSH_BEFORE}" && ! "${PUSH_BEFORE}" =~ ^0+$ ]]; then
+            log_opts="${PUSH_BEFORE}..HEAD"
+          fi
+          gitleaks git . --config .gitleaks.toml --log-opts "${log_opts}" \
+            --report-format sarif --report-path gitleaks.sarif --redact --exit-code 1 --no-banner
+
+      - name: Upload to the Security tab
+        if: always() && hashFiles('gitleaks.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+      - name: Fail on findings
+        if: always() && steps.scan.outcome == 'failure'
+        run: |
+          echo "::error::Gitleaks found potential secrets in the scanned commits."
+          exit 1
