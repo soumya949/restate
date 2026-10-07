@@ -68,6 +68,10 @@ SCRIPTS: dict[str, list[tuple[str, str, str]]] = {
 }
 
 
+def _usage() -> Usage:
+    return Usage(requests=1, input_tokens=12, output_tokens=5, total_tokens=17)
+
+
 class FakeModel(Model):
     async def get_response(self, system_instructions: Any, input: Any, *args: Any, **kwargs: Any) -> ModelResponse:
         items = input if isinstance(input, list) else [{"role": "user", "content": input}]
@@ -77,13 +81,13 @@ class FakeModel(Model):
         if outputs:
             text = ResponseOutputText(type="output_text", text="done: " + " | ".join(outputs), annotations=[])
             msg = ResponseOutputMessage(id="m1", type="message", role="assistant", status="completed", content=[text])
-            return ModelResponse(output=[msg], usage=Usage(), response_id=None)
+            return ModelResponse(output=[msg], usage=_usage(), response_id=None)
         prompt = next(str(i.get("content")) for i in items if isinstance(i, dict) and i.get("role") == "user")
         calls = [
             ResponseFunctionToolCall(type="function_call", call_id=cid, name=name, arguments=args, id=f"fc_{cid}")
             for cid, name, args in SCRIPTS[prompt]
         ]
-        return ModelResponse(output=list(calls), usage=Usage(), response_id=None)
+        return ModelResponse(output=list(calls), usage=_usage(), response_id=None)
 
     def stream_response(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError

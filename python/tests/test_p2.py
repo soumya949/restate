@@ -33,6 +33,19 @@ async def test_govern_agent_governs_tool_keyed_by_call_id_exactly_once(call: Any
     assert len(agent_core.evaluations("WorkflowCompleted")) == 1
 
 
+async def test_every_model_call_reported_once_as_llm_call_with_tokens(call: Any) -> None:
+    await ok(call, "oai/run", "weather")
+    started = agent_core.evaluations("ActivityStarted", "llm_call")
+    completed = agent_core.evaluations("ActivityCompleted", "llm_call")
+    # Two model calls (tool request, then the answer), each once despite replays.
+    assert len(started) == 2 and len(completed) == 2
+    assert started[0].body["activity_input"] == [{"prompt": "weather"}]
+    first, second = completed[0].body["activity_output"], completed[1].body["activity_output"]
+    assert first["input_tokens"] == 12 and first["output_tokens"] == 5 and first["total_tokens"] == 17
+    assert first["has_tool_calls"] is True and first["llm_model"]
+    assert second["has_tool_calls"] is False and "Paris" in second["completion"]
+
+
 async def test_block_goes_back_to_the_model_as_the_tool_output(call: Any) -> None:
     agent_core.on_activity("delete_records", "ActivityStarted", {"verdict": "block", "reason": "no deletes"})
     out = await ok(call, "oai/run", "delete")
@@ -49,7 +62,8 @@ async def test_halt_ends_the_invocation_not_retried_by_the_agents_sdk(call: Any)
     assert ran == []
     # One pre-check: the HALT was terminal, not wrapped into a retryable UserError.
     assert len(agent_core.evaluations("ActivityStarted", "wire_money")) == 1
-    assert len(agent_core.evaluations("WorkflowFailed")) == 1
+    # Core already closed the session on HALT: nothing is sent after it.
+    assert agent_core.evaluations("WorkflowFailed") == []
 
 
 async def test_durable_approval_inside_an_agents_sdk_tool(call: Any) -> None:

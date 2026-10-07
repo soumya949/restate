@@ -8,11 +8,12 @@
  *      for human approval → run → report), and a blocked call is fed back to
  *      the LLM as the tool result instead of crashing the agent.
  *   3. `enableOpenBoxSpans()` reports the HTTP calls each tool makes as spans
+ *   4. `reportLlmCall` reports each LLM call (model, tokens) for OpenBox's Model Usage
  *      of that tool's activity (each span also gets a verdict).
  */
 import { existsSync } from "node:fs";
 
-import { governedCall, isBlocked, openboxHandler } from "@openbox-ai/openbox-restate-sdk"; // OPENBOX
+import { governedCall, isBlocked, openboxHandler, reportLlmCall } from "@openbox-ai/openbox-restate-sdk"; // OPENBOX
 import { enableOpenBoxSpans } from "@openbox-ai/openbox-restate-sdk/instrumentation"; // OPENBOX
 import * as restate from "@restatedev/restate-sdk";
 import { tool, type ModelMessage } from "ai";
@@ -92,6 +93,14 @@ const run = openboxHandler( // OPENBOX
 
     while (true) {
       const result = await ctx.run("LLM call", async () => await callLLM(messages, tools), { maxRetryAttempts: 3 });
+      await reportLlmCall(ctx, { // OPENBOX
+        model: result.model,
+        prompt: message,
+        completion: result.text || null,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        hasToolCalls: result.toolCalls.length > 0
+      });
       messages.push(...result.messages);
       if (result.finishReason !== "tool-calls") return result.text;
 

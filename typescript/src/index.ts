@@ -37,6 +37,7 @@ export {
 } from "./governed-run.js";
 export { childHeaders, governedSubAgent, type SubAgentCall } from "./multi-agent.js";
 export { openboxAuditHook, type OpenBoxAuditHookOptions } from "./hooks.js";
+export { reportLlmCall, LLM_ACTIVITY_TYPE, type LlmCallReport } from "./llm.js";
 
 export {
   HEADER_MULTI_AGENT_SESSION_ID,

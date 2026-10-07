@@ -5,13 +5,14 @@
  *   1. the handler is wrapped with `openboxHandler`
  *   2. the tools passed to `generateText` go through `governTools(ctx, ...)`
  *   3. `enableOpenBoxSpans()` reports the HTTP calls each tool makes as spans
+ *   4. `openboxLlmTelemetry(ctx)` reports each LLM call (model, tokens) for Model Usage
  */
 import { existsSync } from "node:fs";
 
 import { openai } from "@ai-sdk/openai";
 import { openboxHandler } from "@openbox-ai/openbox-restate-sdk"; // OPENBOX
 import { enableOpenBoxSpans } from "@openbox-ai/openbox-restate-sdk/instrumentation"; // OPENBOX
-import { governTools } from "@openbox-ai/openbox-restate-sdk/vercel-ai"; // OPENBOX
+import { governTools, openboxLlmTelemetry } from "@openbox-ai/openbox-restate-sdk/vercel-ai"; // OPENBOX
 import * as restate from "@restatedev/restate-sdk";
 import { durableCalls } from "@restatedev/vercel-ai-middleware";
 import { generateText, stepCountIs, tool, wrapLanguageModel } from "ai";
@@ -45,8 +46,8 @@ const run = openboxHandler( // OPENBOX
   async (ctx: restate.Context, { prompt }: { prompt: string }) => {
     const model = wrapLanguageModel({
       model: openai(process.env["OPENAI_MODEL"] ?? "gpt-5.4"),
-      // Persist LLM responses
-      middleware: durableCalls(ctx, { maxRetryAttempts: 3 })
+      // Report each LLM call to OpenBox (OPENBOX), then persist the response (Restate)
+      middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx, { maxRetryAttempts: 3 })]
     });
 
     const { text } = await generateText({

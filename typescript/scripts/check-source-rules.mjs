@@ -17,7 +17,12 @@ const files = readdirSync(SRC).filter((f) => f.endsWith(".ts"));
 
 const rules = [
   { re: /\brandomUUID\s*\(|\bMath\.random\s*\(/, msg: "non-deterministic id source (use ids.ts / ctx.rand)" },
-  { re: /\bDate\.now\s*\(|\bnew Date\s*\(/, msg: "wall clock in control flow (use ctx.date.now())" },
+  {
+    re: /\bDate\.now\s*\(|\bnew Date\s*\(/,
+    msg: "wall clock in control flow (use ctx.date.now())",
+    // steps.ts reads it only inside journaled ctx.run closures (timestamps on verdict/approval records).
+    allow: ["steps.ts"]
+  },
   { re: /["'`]\/api\/v\d/, msg: "raw OpenBox API path (use the base OpenBoxClient)" },
   { re: /x-openbox-(agent-(did|timestamp|nonce|signature|assertion)|sdk-version|body-sha256|workload-token)/i, msg: "signing header literal (base SDK owns signing)" },
   {

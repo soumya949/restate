@@ -16,7 +16,7 @@ from .enforce import details_of
 from .errors import ApprovalExpiredError, ApprovalRejectedError, OpenBoxUnavailableError
 from .ids import StepNames
 from .steps import poll_step
-from .verdict_record import VerdictRecord
+from .verdict_record import ApprovalRecord, VerdictRecord
 
 if TYPE_CHECKING:
     from .config import RestateGovernanceConfig
@@ -36,7 +36,7 @@ async def wait_for_approval(
     activity_id: str,
     verdict: VerdictRecord,
     step_key: str | None = None,
-) -> None:
+) -> ApprovalRecord | None:
     """Return when approved; raise ApprovalRejectedError / ApprovalExpiredError / OpenBoxUnavailableError."""
     cfg = g.rt.config.restate
     details = details_of(verdict)
@@ -59,7 +59,7 @@ async def wait_for_approval(
         rec = await poll_step(ctx, g, StepNames.approval_poll(key, n), activity_id)
         status = rec["status"]
         if status == "approved":
-            return
+            return rec
         if status == "rejected":
             raise ApprovalRejectedError(rec["reason"] or "rejected by reviewer", **details)
         if status == "expired":
@@ -73,7 +73,7 @@ async def wait_for_approval(
                         "proceeding",
                         failures,
                     )
-                    return
+                    return None
                 raise OpenBoxUnavailableError(
                     f"approval status unavailable after {failures} consecutive polls", **details
                 )

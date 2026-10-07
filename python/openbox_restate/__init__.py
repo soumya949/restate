@@ -26,6 +26,7 @@ from .errors import (
 )
 from .governed_run import Blocked, governed_call, governed_run, is_blocked
 from .handler import openbox_handler
+from .llm import LLM_ACTIVITY_TYPE, report_llm_call
 from .runtime import OpenBoxRestate, get_default_runtime, set_default_runtime
 
 __all__ = [
@@ -42,6 +43,8 @@ __all__ = [
     "governed_call",
     "Blocked",
     "is_blocked",
+    "report_llm_call",
+    "LLM_ACTIVITY_TYPE",
     "HEADER_MULTI_AGENT_SESSION_ID",
     "HEADER_PARENT_ACTIVITY_ID",
     "HEADER_PARENT_AGENT_DID",

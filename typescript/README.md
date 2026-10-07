@@ -38,7 +38,7 @@ Credentials come from the environment: `OPENBOX_API_URL`, `OPENBOX_API_KEY`, and
 |---|---|
 | ALLOW | The tool runs. |
 | BLOCK | The tool does not run; `governedCall` **returns** a `BlockedResult` for the model. Use `onBlock: "throw"` to throw instead. |
-| HALT | `GovernanceHaltError` (a Restate `TerminalError`) ends the invocation, even if your code or a framework swallows it. |
+| HALT | `GovernanceHaltError` (a Restate `TerminalError`) ends the invocation, even if your code or a framework swallows it. OpenBox closes the session at that point, so nothing further is reported. |
 | REQUIRE_APPROVAL | A durable wait (`ctx.sleep` between journaled polls), then the tool runs, or `ApprovalRejectedError` / `ApprovalExpiredError`. |
 | Guardrails | Input and output redaction is applied; a failed validation throws `GuardrailsValidationError`. |
 
@@ -50,6 +50,7 @@ Credentials come from the environment: `OPENBOX_API_URL`, `OPENBOX_API_KEY`, and
 | `governedRun(ctx, name, op, fn)` / `governedCall(ctx, call, fn)` | Govern one side-effecting step. |
 | `governedParallel(ctx, calls)` | Pre-checks in call order, tools concurrently, post-checks in call order. |
 | `governedSubAgent(ctx, call, invoke)`, `childHeaders(ctx)` | Call another governed agent in the same Multi-Agent Session. |
+| `reportLlmCall(ctx, report)` / `./vercel-ai` → `openboxLlmTelemetry(ctx)` | Report model calls (model, tokens) for Model Usage. Telemetry only. |
 | `openboxAuditHook()` | Optional Restate hook. Reports `ctx.run` calls made outside governed tools, audit only. |
 | `@openbox-ai/openbox-restate-sdk/vercel-ai` → `governTools(ctx, tools)` | Govern Vercel AI SDK tools (`ai` v6 or v7). |
 | `@openbox-ai/openbox-restate-sdk/instrumentation` → `enableOpenBoxSpans()` | Report each tool's HTTP, file and DB calls as spans (patches globals; opt in). |

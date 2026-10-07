@@ -108,6 +108,11 @@ class Prepared:
     blocked: tuple[VerdictRecord, str] | None = None
     #: A human approved this activity (durably, before it ran).
     approved: bool = False
+    #: Journaled epoch ms from which the tool could run (after any approval wait); None for old journals.
+    started_at: int | None = None
+
+    def duration_at(self, now: int) -> int | None:
+        return now - self.started_at if self.started_at is not None else None
 
 
 @dataclass
@@ -147,7 +152,7 @@ async def pre_phase(
         ctx,
         g,
         pre_step,
-        lambda: [
+        lambda _now: [
             activity_started_event(
                 g,
                 pre_step,
@@ -165,9 +170,9 @@ async def pre_phase(
         raise _halt(g, pre, d.reason)
     if d.kind == "blocked":
         return Prepared(name, aid, input, pre, blocked=(pre, d.reason))
-    if d.kind == "approval":
-        await wait_for_approval(ctx, g, aid, pre)
-    return Prepared(name, aid, redacted(pre, input, "input"), pre, approved=d.kind == "approval")
+    approval = await wait_for_approval(ctx, g, aid, pre) if d.kind == "approval" else None
+    started_at = approval.get("at") if approval is not None else pre.get("at")
+    return Prepared(name, aid, redacted(pre, input, "input"), pre, approved=d.kind == "approval", started_at=started_at)
 
 
 async def run_tool(
@@ -229,20 +234,28 @@ async def finish_phase(
             raise err  # non-terminal: Restate's retry policy handles it, nothing is reported yet
         err_info = error_info_of(err)
         hook = hook_verdict_of(err)
-        failed_step = StepNames.post_failed(aid)
-        await best_effort(
-            f"ActivityCompleted(failed) for {name}",
-            evaluate_step(
-                ctx,
-                g,
-                failed_step,
-                lambda: [
-                    activity_completed_event(
-                        g, failed_step, activity_id=aid, activity_type=name, status="failed", error=err_info
-                    )
-                ],
-            ),
-        )
+        # After a span HALT, Core has already closed the session: anything more is dropped.
+        if hook is None or hook[0] != "hook_halt":
+            failed_step = StepNames.post_failed(aid)
+            await best_effort(
+                f"ActivityCompleted(failed) for {name}",
+                evaluate_step(
+                    ctx,
+                    g,
+                    failed_step,
+                    lambda now: [
+                        activity_completed_event(
+                            g,
+                            failed_step,
+                            activity_id=aid,
+                            activity_type=name,
+                            status="failed",
+                            error=err_info,
+                            duration_ms=p.duration_at(now),
+                        )
+                    ],
+                ),
+            )
         if hook is not None:
             # A span preflight stopped the tool before its HTTP/DB/file call went out.
             kind, reason, policy_id = hook
@@ -270,9 +283,15 @@ async def finish_phase(
         ctx,
         g,
         post_step,
-        lambda: [
+        lambda now: [
             activity_completed_event(
-                g, post_step, activity_id=aid, activity_type=name, status="completed", result=result
+                g,
+                post_step,
+                activity_id=aid,
+                activity_type=name,
+                status="completed",
+                result=result,
+                duration_ms=p.duration_at(now),
             )
         ],
     )

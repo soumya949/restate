@@ -21,7 +21,16 @@ from litellm import acompletion
 from litellm.types.utils import Message
 from pydantic import BaseModel
 
-from openbox_restate import governed_call, is_blocked, openbox_handler  # OPENBOX
+from openbox_restate import governed_call, is_blocked, openbox_handler, report_llm_call  # OPENBOX
+
+
+class LlmResult(BaseModel):
+    """The journaled LLM step: the message plus what OpenBox's Model Usage needs."""
+
+    message: Message
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class Prompt(BaseModel):
@@ -102,11 +111,27 @@ async def run(ctx: restate.Context, prompt: Prompt) -> str | None:
 
     while True:
 
-        async def call_llm() -> Message:
+        async def call_llm() -> LlmResult:
             resp = await acompletion(model=os.environ.get("OPENAI_MODEL", "gpt-5.4"), messages=messages, tools=TOOLS)
-            return resp.choices[0].message  # type: ignore[no-any-return]
+            usage = getattr(resp, "usage", None)
+            return LlmResult(
+                message=resp.choices[0].message,
+                model=resp.model,
+                input_tokens=getattr(usage, "prompt_tokens", None),
+                output_tokens=getattr(usage, "completion_tokens", None),
+            )
 
-        response = await ctx.run_typed("LLM call", call_llm)
+        llm = await ctx.run_typed("LLM call", call_llm)
+        response = llm.message
+        await report_llm_call(  # OPENBOX: feeds Model Usage / LLM Calls
+            ctx,
+            model=llm.model,
+            prompt=prompt.message,
+            completion=response.content,
+            input_tokens=llm.input_tokens,
+            output_tokens=llm.output_tokens,
+            has_tool_calls=bool(response.tool_calls),
+        )
         messages.append(response.model_dump())
         if not response.tool_calls:
             return response.content  # type: ignore[no-any-return]

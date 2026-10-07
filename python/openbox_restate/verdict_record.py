@@ -6,7 +6,7 @@ Field names match the TypeScript package so journals look the same in both langu
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from openbox_core.contracts.results import ApprovalResult, EvaluationResult
 
@@ -32,12 +32,16 @@ class VerdictRecord(TypedDict):
     approvalExpirationTime: str | None
     guardrails: GuardrailsRecord | None
     fallbackUsed: bool
+    #: Epoch ms when the step ran, captured inside the journaled action (absent in older journals).
+    at: NotRequired[int]
 
 
 class ApprovalRecord(TypedDict):
     v: int
     status: ApprovalStatus
     reason: str | None
+    #: Epoch ms of the poll, captured inside the journaled action.
+    at: NotRequired[int]
 
 
 def to_record(r: EvaluationResult) -> VerdictRecord:

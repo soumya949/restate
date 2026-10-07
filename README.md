@@ -96,6 +96,18 @@ async def run(_ctx: restate.Context, req: Prompt) -> str:
 
 **Parallel tool calls** (`governedParallel` / `governed_parallel`): the pre-checks run one at a time in call order, the tools run concurrently, then the post-checks run in call order. This keeps the journal deterministic.
 
+## LLM calls (Model Usage, Cost, "LLM Calls")
+
+Each model call can be reported as an `llm_call` activity carrying the model, the token counts and the completion. This is telemetry only: it is never enforced, and it is sent in one journaled step, so a replay never double-counts it.
+
+| Where | How |
+|---|---|
+| Vercel AI SDK | `wrapLanguageModel({ model, middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx)] })`. Put it before `durableCalls`. |
+| OpenAI Agents SDK | Automatic: `govern_agent` adds agent hooks, chained with any hooks you already have |
+| Raw loops | `reportLlmCall(ctx, {...})` / `await report_llm_call(ctx, ...)` after the journaled LLM call |
+
+Governed tools also send `duration_ms` on `ActivityCompleted`, which OpenBox shows as latency. It is measured from journaled timestamps, starting after any approval wait.
+
 ## Multi-agent
 
 A parent agent calls a child agent over Restate RPC with `governedSubAgent` / `governed_sub_agent`:

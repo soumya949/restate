@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import { openai } from "@ai-sdk/openai";
 import { createOpenBoxRestate, openboxHandler } from "@openbox-ai/openbox-restate-sdk";
 import { enableOpenBoxSpans } from "@openbox-ai/openbox-restate-sdk/instrumentation";
-import { governTools } from "@openbox-ai/openbox-restate-sdk/vercel-ai";
+import { governTools, openboxLlmTelemetry } from "@openbox-ai/openbox-restate-sdk/vercel-ai";
 import * as restate from "@restatedev/restate-sdk";
 import { durableCalls } from "@restatedev/vercel-ai-middleware";
 import { generateText, stepCountIs, tool, wrapLanguageModel } from "ai";
@@ -45,7 +45,7 @@ const research = restate.service({
         const { text } = await generateText({
           model: wrapLanguageModel({
             model: openai(process.env["OPENAI_MODEL"] ?? "gpt-5.4"),
-            middleware: durableCalls(ctx, { maxRetryAttempts: 3 })
+            middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx, { maxRetryAttempts: 3 })]
           }),
           system: "You are a research agent. Use the tools, answer briefly with facts.",
           prompt: question,

@@ -18,7 +18,7 @@ import { GovernanceBlockedError, GovernanceHaltError, hookVerdictOf } from "./er
 import { activityCompletedEvent, activityStartedEvent, errorInfoOf } from "./events.js";
 import { activityIdFor, stepNames } from "./ids.js";
 import { bestEffort, evaluateStep } from "./steps.js";
-import type { VerdictRecord } from "./verdict-record.js";
+import type { ApprovalRecord, VerdictRecord } from "./verdict-record.js";
 
 /** Returned (never thrown, by default) when OpenBox blocks a step. Feed it back to the LLM as the tool result. */
 export interface BlockedResult {
@@ -107,6 +107,8 @@ export interface Prepared<I> {
   pre: VerdictRecord;
   /** A human approved this activity (durably, before it ran). */
   approved: boolean;
+  /** Journaled epoch ms from which the tool could run (after any approval wait); null for old journals. */
+  startedAt: number | null;
 }
 /** @internal */
 export type PreResult<I> = Prepared<I> | { kind: "done"; value: BlockedResult };
@@ -139,18 +141,20 @@ export async function prePhase<I>(
     })
   ]);
   const d = decide(pre, cfg.hitlEnabled);
+  let approval: ApprovalRecord | null = null;
   switch (d.kind) {
     case "halt":
       halt(g, pre, d.reason);
     case "blocked":
       return { kind: "done", value: blockedOrThrow(pre, d.reason, opts) };
     case "approval":
-      await waitForApproval(ctx, g, id, pre);
+      approval = await waitForApproval(ctx, g, id, pre);
       break;
     case "proceed":
       break;
   }
-  return { kind: "run", name, id, input: redacted(pre, op.input, "input"), pre, approved: d.kind === "approval" };
+  const startedAt = approval?.at ?? pre.at ?? null;
+  return { kind: "run", name, id, input: redacted(pre, op.input, "input"), pre, approved: d.kind === "approval", startedAt };
 }
 
 /**
@@ -205,15 +209,23 @@ export async function finishPhase<I, O>(
   opts: GovernedRunOptions
 ): Promise<O | BlockedResult> {
   const { name, id, pre } = p;
+  const durationAt = (now: number) => (p.startedAt !== null ? now - p.startedAt : undefined);
   if (!outcome.ok) {
     const err = outcome.err;
     const hook = hookVerdictOf(err);
     const terminal = err instanceof restate.TerminalError && !restate.internal.isSuspendedError(err);
-    if (hook || terminal) {
+    // After a span HALT, Core has already closed the session: anything more is dropped.
+    if ((hook && hook.kind !== "hook_halt") || (!hook && terminal)) {
       const failedStep = stepNames.postFailed(id);
       await bestEffort(g, `ActivityCompleted(failed) for ${name}`, () =>
-        evaluateStep(ctx, g, failedStep, () => [
-          activityCompletedEvent(g, failedStep, { activityId: id, activityType: name, status: "failed", error: errorInfoOf(err) })
+        evaluateStep(ctx, g, failedStep, (now) => [
+          activityCompletedEvent(g, failedStep, {
+            activityId: id,
+            activityType: name,
+            status: "failed",
+            error: errorInfoOf(err),
+            durationMs: durationAt(now)
+          })
         ])
       );
     }
@@ -238,8 +250,8 @@ export async function finishPhase<I, O>(
 
   const cfg = g.rt.config.restate;
   const postStep = stepNames.post(id);
-  const post = await evaluateStep(ctx, g, postStep, () => [
-    activityCompletedEvent(g, postStep, { activityId: id, activityType: name, status: "completed", result })
+  const post = await evaluateStep(ctx, g, postStep, (now) => [
+    activityCompletedEvent(g, postStep, { activityId: id, activityType: name, status: "completed", result, durationMs: durationAt(now) })
   ]);
   const pd = decide(post, cfg.hitlEnabled);
   switch (pd.kind) {

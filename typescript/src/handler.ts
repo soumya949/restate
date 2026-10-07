@@ -91,13 +91,16 @@ async function governInvocation<C extends restate.Context, I, O>(
   await enforceLifecycle(ctx, g, start, input, "start");
 
   // 2. User code. A HALT that user code (or a framework, e.g. the AI SDK turning a tool
-  // error into a tool result) caught and swallowed still ends the session, reported as failed.
+  // error into a tool result) caught and swallowed still ends the invocation.
   let output: O;
   try {
     output = await fn(ctx, input);
     if (g.halted) throw haltedError(g);
-  } catch (err) {
-    if (err instanceof restate.TerminalError && !restate.internal.isSuspendedError(err)) {
+  } catch (caught) {
+    // Whatever a framework wrapped or swallowed, a halted session ends with the original HALT.
+    const err = g.halted && !restate.internal.isSuspendedError(caught) ? haltedError(g) : caught;
+    // After a HALT, Core has already closed the session ("Session is no longer active"): skip WorkflowFailed.
+    if (err instanceof restate.TerminalError && !restate.internal.isSuspendedError(err) && !(err instanceof GovernanceHaltError)) {
       await bestEffort(g, "WorkflowFailed", () =>
         evaluateStep(ctx, g, stepNames.endFailed, () => [workflowFailedEvent(g, stepNames.endFailed, errorInfoOf(err))])
       );
@@ -163,6 +166,7 @@ async function approvalGate(
     case "blocked":
       throw new GovernanceBlockedError(d.reason, detailsOf(gate));
     case "approval":
-      return waitForApproval(ctx, g, id, gate);
+      await waitForApproval(ctx, g, id, gate);
+      return;
   }
 }
