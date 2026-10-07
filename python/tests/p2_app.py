@@ -65,7 +65,11 @@ SCRIPTS: dict[str, list[tuple[str, str, str]]] = {
     "wire": [("call_x1", "wire_money", '{"account": "A1", "amount": 5}')],
     "email": [("call_e1", "send_email", '{"to": "bob@example.com"}')],
     "both": [("call_b1", "get_weather", '{"city": "Rome"}'), ("call_b2", "get_weather", '{"city": "Oslo"}')],
+    "span-weather": [("call_s1", "get_weather", '{"city": "Lima"}')],
 }
+
+#: Set by tests/app.py: the downstream API port used as a stand-in model provider.
+PROVIDER_PORT: list[int] = []
 
 
 def _usage() -> Usage:
@@ -75,6 +79,11 @@ def _usage() -> Usage:
 class FakeModel(Model):
     async def get_response(self, system_instructions: Any, input: Any, *args: Any, **kwargs: Any) -> ModelResponse:
         items = input if isinstance(input, list) else [{"role": "user", "content": input}]
+        first_user = next(str(i.get("content")) for i in items if isinstance(i, dict) and i.get("role") == "user")
+        if first_user.startswith("span-") and PROVIDER_PORT:
+            # Stand-in for the provider request (api.openai.com): captured as a span of the llm_call.
+            async with httpx.AsyncClient() as http:
+                await http.post(f"http://127.0.0.1:{PROVIDER_PORT[0]}/v1/responses", json={"model": "fake"})
         outputs = [
             str(i.get("output")) for i in items if isinstance(i, dict) and i.get("type") == "function_call_output"
         ]

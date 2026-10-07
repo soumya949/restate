@@ -55,7 +55,7 @@ async def run(_ctx: restate.Context, req: Prompt) -> str:
 | `governed_parallel` (`openbox_restate.governed_run`) | Pre-checks in call order, tools concurrently, post-checks in call order |
 | `governed_sub_agent`, `child_headers` (`openbox_restate.multi_agent`) | Call another governed agent in the same Multi-Agent Session |
 | `govern_agent`, `govern_tool`, `governed_function_tool` (`openbox_restate.openai`) | OpenAI Agents SDK |
-| `report_llm_call(ctx, ...)` | Report a model call (model, tokens) for Model Usage. `govern_agent` does it for you |
+| `governed_llm_call` / `report_llm_call` (`openbox_restate.llm`) | Report a model call (model, tokens) for Model Usage. `govern_agent` does it for you |
 | `enable_openbox_spans()` (`openbox_restate.instrumentation`) | Report each tool's httpx, requests, urllib3, urllib, DB and file calls as spans |
 
 Configuration and verdict behaviour are the same as the TypeScript package; see its README. The environment variables are `OPENBOX_API_URL`, `OPENBOX_API_KEY`, `OPENBOX_AGENT_DID`, `OPENBOX_AGENT_PRIVATE_KEY` and the `OPENBOX_RESTATE_*` overrides.

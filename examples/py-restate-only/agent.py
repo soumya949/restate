@@ -21,7 +21,8 @@ from litellm import acompletion
 from litellm.types.utils import Message
 from pydantic import BaseModel
 
-from openbox_restate import governed_call, is_blocked, openbox_handler, report_llm_call  # OPENBOX
+from openbox_restate import governed_call, is_blocked, openbox_handler  # OPENBOX
+from openbox_restate.llm import governed_llm_call, llm_output  # OPENBOX
 
 
 class LlmResult(BaseModel):
@@ -121,17 +122,20 @@ async def run(ctx: restate.Context, prompt: Prompt) -> str | None:
                 output_tokens=getattr(usage, "completion_tokens", None),
             )
 
-        llm = await ctx.run_typed("LLM call", call_llm)
-        response = llm.message
-        await report_llm_call(  # OPENBOX: feeds Model Usage / LLM Calls
+        # OPENBOX: an llm_call activity around the journaled call (its HTTP request becomes a span)
+        llm = await governed_llm_call(
             ctx,
-            model=llm.model,
+            lambda: ctx.run_typed("LLM call", call_llm),
+            lambda r: llm_output(
+                model=r.model,
+                completion=r.message.content,
+                input_tokens=r.input_tokens,
+                output_tokens=r.output_tokens,
+                has_tool_calls=bool(r.message.tool_calls),
+            ),
             prompt=prompt.message,
-            completion=response.content,
-            input_tokens=llm.input_tokens,
-            output_tokens=llm.output_tokens,
-            has_tool_calls=bool(response.tool_calls),
         )
+        response = llm.message
         messages.append(response.model_dump())
         if not response.tool_calls:
             return response.content  # type: ignore[no-any-return]

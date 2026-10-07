@@ -104,7 +104,9 @@ Each model call can be reported as an `llm_call` activity carrying the model, th
 |---|---|
 | Vercel AI SDK | `wrapLanguageModel({ model, middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx)] })`. Put it before `durableCalls`. |
 | OpenAI Agents SDK | Automatic: `govern_agent` adds agent hooks, chained with any hooks you already have |
-| Raw loops | `reportLlmCall(ctx, {...})` / `await report_llm_call(ctx, ...)` after the journaled LLM call |
+| Raw loops | Wrap the journaled LLM call: `governedLlmCall(ctx, { prompt }, () => ctx.run(...), describe)` / `governed_llm_call(ctx, call, describe, prompt=...)`. (`reportLlmCall` / `report_llm_call` reports after the fact, without spans.) |
+
+With span capture on, the model provider's HTTP request appears as a span of its `llm_call`. The `llm_call` is started before the request, the same way as a governed tool.
 
 Governed tools also send `duration_ms` on `ActivityCompleted`, which OpenBox shows as latency. It is measured from journaled timestamps, starting after any approval wait.
 

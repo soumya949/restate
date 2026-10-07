@@ -20,15 +20,14 @@
  * Also exports `openboxLlmTelemetry(ctx)`, a model middleware that reports LLM calls.
  */
 
-import * as restate from "@restatedev/restate-sdk";
+import type * as restate from "@restatedev/restate-sdk";
 import type { LanguageModelMiddleware, ToolExecutionOptions, ToolSet } from "ai";
 
 import { getGovernanceContext } from "./context.js";
 import { OpenBoxContractError } from "./errors.js";
 import { governedRun, haltedError, type GovernedRunOptions } from "./governed-run.js";
-import { reportLlmCall } from "./llm.js";
+import { governedLlmCall } from "./llm.js";
 
-const restateInternal = restate.internal;
 
 export interface GovernToolsOptions {
   /** Semantic event type per tool name (`EMAIL_SEND`, `DATABASE_WRITE`, …). */
@@ -150,28 +149,22 @@ export function openboxLlmTelemetry(ctx: restate.Context): LanguageModelMiddlewa
       const g = getGovernanceContext(ctx);
       if (g?.halted) throw haltedError(g);
       const prompt = latestUserText(params.prompt as ReadonlyArray<{ role: string; content: unknown }>);
-      let result: Awaited<ReturnType<typeof doGenerate>>;
-      try {
-        result = await doGenerate();
-      } catch (err) {
-        if (err instanceof Error && restateInternal.isSuspendedError(err)) throw err;
-        await reportLlmCall(ctx, { model: model.modelId, prompt, error: err });
-        throw err;
-      }
-      const content = result.content as ReadonlyArray<{ type: string; text?: string }>;
-      const completion = content
-        .filter((c) => c.type === "text" && typeof c.text === "string")
-        .map((c) => c.text as string)
-        .join("");
-      await reportLlmCall(ctx, {
-        model: model.modelId,
-        prompt,
-        completion: completion || null,
-        inputTokens: result.usage.inputTokens.total ?? null,
-        outputTokens: result.usage.outputTokens.total ?? null,
-        hasToolCalls: content.some((c) => c.type === "tool-call")
+      // The model's HTTP request runs inside the llm_call activity: with spans enabled, the POST to the
+      // provider appears as its span. doGenerate is journaled by durableCalls (inside this middleware).
+      return governedLlmCall(ctx, { prompt, model: model.modelId }, async () => await doGenerate(), (result) => {
+        const content = result.content as ReadonlyArray<{ type: string; text?: string }>;
+        const completion = content
+          .filter((c) => c.type === "text" && typeof c.text === "string")
+          .map((c) => c.text as string)
+          .join("");
+        return {
+          model: model.modelId,
+          completion: completion || null,
+          inputTokens: result.usage.inputTokens.total ?? null,
+          outputTokens: result.usage.outputTokens.total ?? null,
+          hasToolCalls: content.some((c) => c.type === "tool-call")
+        };
       });
-      return result;
     }
   };
 }

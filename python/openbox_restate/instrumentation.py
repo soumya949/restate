@@ -31,6 +31,7 @@ from openbox_core.contracts.context import ActivityContext
 from openbox_core.contracts.results import EvaluationResult, Verdict
 from openbox_core.runtime import OpenBoxRuntime
 
+from .context import current_governance_context
 from .errors import HookErrorKind, tagged_hook_error
 from .runtime import OpenBoxRestate, SpanScopeInfo, get_default_runtime
 
@@ -121,6 +122,38 @@ class RestateSpanAdapter:
             return (workflow_id, run_id) in self._halted_runs
 
 
+def _activity(info: SpanScopeInfo) -> ActivityContext:
+    return ActivityContext(
+        workflow_id=info.workflow_id,
+        run_id=info.run_id,
+        workflow_type=info.workflow_type,
+        activity_id=info.activity_id,
+        activity_type=info.activity_type,
+        agent_name=info.agent_name,
+        session_id=info.session_id,
+        multi_agent_session_id=info.multi_agent_session_id,
+    )
+
+
+class _RestateContextStore(ContextStore):
+    """Activity binding for spans: a governed tool's scope first; otherwise the invocation's in-flight
+    llm_call (set by framework hooks that cannot wrap the model call, e.g. the OpenAI Agents SDK, whose
+    hooks run in other tasks). Only for invocations of the runtime that owns the patches."""
+
+    def __init__(self, rt: OpenBoxRestate) -> None:
+        super().__init__()
+        self._rt = rt
+
+    def current_activity_context(self) -> ActivityContext | None:
+        bound = super().current_activity_context()
+        if bound is not None:
+            return bound
+        g = current_governance_context()
+        if g is not None and g.rt is self._rt and g.llm_scope is not None:
+            return _activity(g.llm_scope)
+        return None
+
+
 class _Binder:
     def __init__(self, store: ContextStore, adapter: RestateSpanAdapter) -> None:
         self._store = store
@@ -128,18 +161,7 @@ class _Binder:
 
     @contextmanager
     def scope(self, info: SpanScopeInfo) -> Iterator[None]:
-        token = self._store.bind(
-            ActivityContext(
-                workflow_id=info.workflow_id,
-                run_id=info.run_id,
-                workflow_type=info.workflow_type,
-                activity_id=info.activity_id,
-                activity_type=info.activity_type,
-                agent_name=info.agent_name,
-                session_id=info.session_id,
-                multi_agent_session_id=info.multi_agent_session_id,
-            )
-        )
+        token = self._store.bind(_activity(info))
         key = (info.workflow_id, info.activity_id)
         if info.approved:
             self._adapter.approved_activities.add(key)
@@ -182,7 +204,7 @@ def enable_openbox_spans(runtime: OpenBoxRestate | None = None) -> OpenBoxSpans:
     if rt.span_binder is not None:
         raise RuntimeError("OpenBox spans are already enabled for this runtime")
     adapter = RestateSpanAdapter(rt.client)
-    store = ContextStore()  # our own store: never shares bindings or flags with another runtime
+    store = _RestateContextStore(rt)  # our own store: never shares bindings or flags with another runtime
     base = OpenBoxRuntime(rt.config.base, adapter, client=rt.client, context_store=store)
     base.install_instrumentation()
     manager: Any = getattr(base, "_instrumentation_manager", None)

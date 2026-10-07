@@ -39,7 +39,7 @@ from restate.ext.openai import durable_function_tool, raise_terminal_errors, res
 from .context import require_governance_context
 from .errors import hook_verdict_of
 from .governed_run import governed_run, is_blocked
-from .llm import report_llm_call
+from .llm import llm_finished, llm_output, llm_scope_info, llm_started
 
 __all__ = ["govern_agent", "govern_tool", "governed_function_tool"]
 
@@ -136,7 +136,7 @@ class _OpenBoxAgentHooks(AgentHooks[Any]):
 
     def __init__(self, inner: AgentHooks[Any] | None) -> None:
         self._inner = inner
-        self._prompts: dict[str, str | None] = {}  # invocation id -> latest user prompt
+        self._pending: dict[str, tuple[str, int | None]] = {}  # invocation id -> (llm activity id, start)
 
     async def on_llm_start(self, context: Any, agent: Any, system_prompt: Any, input_items: Any) -> None:
         prompt = None
@@ -144,14 +144,21 @@ class _OpenBoxAgentHooks(AgentHooks[Any]):
             prompt = _text_of(item)
             if prompt:
                 break
-        self._prompts[require_governance_context().workflow_id] = prompt
+        g = require_governance_context()
+        # Started BEFORE the model call, and marked as the invocation's in-flight llm_call, so the
+        # provider's HTTP request is captured as its span (hooks run in other tasks: a ContextVar
+        # set here would not reach the model call, the shared governance context does).
+        aid, started_at = await llm_started(restate_context(), g, prompt)
+        self._pending[g.workflow_id] = (aid, started_at)
+        g.llm_scope = llm_scope_info(g, aid)
         if self._inner:
             await self._inner.on_llm_start(context, agent, system_prompt, input_items)
 
     async def on_llm_end(self, context: Any, agent: Any, response: ModelResponse) -> None:
-        # Fires again on replay (the response comes from the journal); report_llm_call's step is journaled,
+        # Fires again on replay (the response comes from the journal); both llm steps are journaled,
         # so OpenBox still sees the call once.
         g = require_governance_context()
+        g.llm_scope = None
         texts: list[str] = []
         has_tool_calls = False
         for item in response.output:
@@ -163,15 +170,22 @@ class _OpenBoxAgentHooks(AgentHooks[Any]):
                     if getattr(part, "type", None) == "output_text":
                         texts.append(part.text)
         usage = response.usage
-        await report_llm_call(
-            restate_context(),
-            model=_model_name(agent),
-            prompt=self._prompts.pop(g.workflow_id, None),
-            completion="".join(texts) or None,
-            input_tokens=usage.input_tokens if usage else None,
-            output_tokens=usage.output_tokens if usage else None,
-            has_tool_calls=has_tool_calls,
-        )
+        pending = self._pending.pop(g.workflow_id, None)
+        if pending is not None:
+            aid, started_at = pending
+            await llm_finished(
+                restate_context(),
+                g,
+                aid,
+                started_at,
+                llm_output(
+                    model=_model_name(agent),
+                    completion="".join(texts) or None,
+                    input_tokens=usage.input_tokens if usage else None,
+                    output_tokens=usage.output_tokens if usage else None,
+                    has_tool_calls=has_tool_calls,
+                ),
+            )
         if self._inner:
             await self._inner.on_llm_end(context, agent, response)
 

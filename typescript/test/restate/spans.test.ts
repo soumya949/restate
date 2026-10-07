@@ -16,7 +16,7 @@ import * as clients from "@restatedev/restate-sdk-clients";
 import { RestateTestEnvironment } from "@restatedev/restate-sdk-testcontainers";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { OpenBoxRestate, governedRun, isBlocked, openboxHandler } from "../../src/index.js";
+import { OpenBoxRestate, governedLlmCall, governedRun, isBlocked, openboxHandler } from "../../src/index.js";
 import { enableOpenBoxSpans, type OpenBoxSpans } from "../../src/instrumentation.js";
 import { FakeCore, type LedgerEntry } from "../helpers/fake-core.js";
 
@@ -51,6 +51,17 @@ const agent = restate.service({
         const r = await governedRun(ctx, tool, { input: { q: 1 }, toolCallId: "call_1" }, () => callApi(ctx, tool));
         return { blocked: isBlocked(r), result: r };
       },
+      { runtime: rt, agentName: "span-agent" }
+    ),
+    // A model call whose provider HTTP request should become a span of its llm_call activity.
+    llm: openboxHandler(
+      async (ctx: restate.Context, prompt: string) =>
+        governedLlmCall(
+          ctx,
+          { prompt, model: "fake-llm" },
+          () => callApi(ctx, "llm"),
+          () => ({ model: "fake-llm", inputTokens: 3, outputTokens: 2, completion: "hi" })
+        ),
       { runtime: rt, agentName: "span-agent" }
     )
   }
@@ -95,6 +106,21 @@ beforeEach(() => {
 });
 
 describe("span capture", () => {
+  it("an LLM call's provider request is a span of its llm_call activity, exactly once", async () => {
+    const c = clients.connect({ url: env.baseUrl() }).serviceClient(agent);
+    await (c as unknown as { llm: (p: string) => Promise<unknown> }).llm("hello");
+    expect(hits).toBe(1);
+    const llmStarted = core.evaluations("ActivityStarted", "llm_call").filter((e) => e.body["hook_trigger"] !== true);
+    expect(llmStarted).toHaveLength(1);
+    const spans = hookEvals("llm_call");
+    expect(stages(spans)).toEqual(["started", "completed"]);
+    for (const h of spans) expect(h.activityId).toBe(llmStarted[0]!.activityId);
+    const done = core.evaluations("ActivityCompleted", "llm_call");
+    expect(done).toHaveLength(1);
+    expect(done[0]!.body["activity_output"]).toMatchObject({ llm_model: "fake-llm", total_tokens: 5 });
+    expect(done[0]!.body["duration_ms"]).toEqual(expect.any(Number));
+  });
+
   it("installs fetch + http/https", () => {
     expect(spans.installedTargets).toEqual(expect.arrayContaining(["fetch", "http", "https"]));
   });

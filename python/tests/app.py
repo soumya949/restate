@@ -242,6 +242,35 @@ async def tool(ctx: restate.Context, name: str) -> dict[str, Any]:
     return {"blocked": is_blocked(r), "result": _out(r)}
 
 
+from openbox_restate.llm import governed_llm_call, llm_output  # noqa: E402
+
+from . import p2_app  # noqa: E402
 from .p2_app import SERVICES as P2_SERVICES  # noqa: E402
 
-app = restate.app(services=[agent, spans, *P2_SERVICES])
+p2_app.PROVIDER_PORT.append(API_PORT)
+
+
+@spans.handler()
+@openbox_handler(runtime=rt_spans, agent_name="span-agent")
+async def llm(ctx: restate.Context, prompt: str) -> dict[str, Any]:
+    return await governed_llm_call(
+        ctx,
+        lambda: call_api(ctx, "llm"),
+        lambda r: llm_output(model="fake-llm", input_tokens=3, output_tokens=2, completion="hi"),
+        prompt=prompt,
+    )
+
+
+oai_spans = restate.Service("oaiSpans")
+
+
+@oai_spans.handler()
+@openbox_handler(runtime=rt_spans, agent_name="span-oai-agent")
+async def oai_run(_ctx: restate.Context, script: str) -> str:
+    from restate.ext.openai import DurableRunner
+
+    result = await DurableRunner.run(p2_app.governed_mail_agent, script)
+    return str(result.final_output)
+
+
+app = restate.app(services=[agent, spans, oai_spans, *P2_SERVICES])
