@@ -27,12 +27,15 @@ export { openboxHandler, type OpenBoxHandlerOptions } from "./handler.js";
 export {
   governedRun,
   governedCall,
+  governedParallel,
   isBlocked,
   type BlockedResult,
   type GovernedOperation,
   type GovernedRunOptions,
+  type ParallelCall,
   type ToolCall
 } from "./governed-run.js";
+export { childHeaders, governedSubAgent, type SubAgentCall } from "./multi-agent.js";
 
 export {
   HEADER_MULTI_AGENT_SESSION_ID,

@@ -19,6 +19,7 @@ from openbox_core.contracts.events import (
     EventEnvelope,
     activity_completed,
     activity_started,
+    handoff,
     signal_received,
     workflow_completed,
     workflow_failed,
@@ -94,6 +95,14 @@ def workflow_started_event(g: GovernanceContext, step: str, input: Any, capture_
     return workflow_started(**_base(g, step, {"activity_input": [to_json(input)]} if capture_input else None))
 
 
+def handoff_event(g: GovernanceContext) -> EventEnvelope | None:
+    """Multi-agent Handoff, sent by the CHILD (architecture §12.2): Core takes the receiving agent
+    from the signed identity of the sender, so the child's own client sends from_agent_did = parent DID."""
+    if not g.parent_agent_did or not g.parent_workflow_id:
+        return None
+    return handoff(from_agent_did=g.parent_agent_did, multi_agent_session_id=g.multi_agent_session_id)
+
+
 def user_prompt_event(g: GovernanceContext, step: str, prompt: str) -> EventEnvelope:
     return signal_received(signal_name="user_prompt", **_base(g, step, {"signal_args": [prompt]}))
 
@@ -107,8 +116,9 @@ def activity_started_event(
     input: Any,
     semantic_type: str | None = None,
     agent_id: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> EventEnvelope:
-    more: dict[str, Any] = {}
+    more: dict[str, Any] = dict(extra or {})
     if semantic_type:
         more["type"] = semantic_type
     if agent_id:

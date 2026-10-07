@@ -14,7 +14,7 @@ dependencies = [
 [project.optional-dependencies]
 # Span capture (openbox_restate.instrumentation): HTTP instrumentation from the base SDK
 spans = ["openbox-sdk-python[http]>=1.4.0"]
-# P2: OpenAI Agents SDK integration (openbox_restate.openai)
+# OpenAI Agents SDK integration (openbox_restate.openai)
 openai = ["restate-sdk[openai]>=1.0.5"]
 
 [dependency-groups]
@@ -24,7 +24,7 @@ dev = [
     "mypy>=1.18",
     "ruff>=0.6",
     "httpx>=0.28",
-    "restate-sdk[harness,serde]>=1.0.5",
+    "restate-sdk[harness,serde,openai]>=1.0.5",
     "openbox-sdk-python[http]>=1.4.0",
     "hypercorn",
 ]

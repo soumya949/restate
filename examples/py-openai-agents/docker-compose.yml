@@ -1,0 +1,42 @@
+# Runs the Restate server + the governed OpenAI Agents SDK agent (restate-sdk has no Windows wheel).
+#
+#   docker compose -f examples/py-openai-agents/docker-compose.yml up
+#   curl localhost:8080/agent/run --json '{"message": "What is the weather in Paris?"}'
+#
+# Credentials come from the repo-root .env (see .env.example).
+services:
+  restate:
+    image: docker.io/restatedev/restate:latest
+    ports: ["${RESTATE_INGRESS_PORT:-8080}:8080", "${RESTATE_ADMIN_PORT:-9070}:9070"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9070/health"]
+      interval: 2s
+      retries: 30
+
+  agent:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    working_dir: /work/examples/py-openai-agents
+    volumes:
+      - ../..:/work
+      - uv-cache:/root/.cache/uv
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      UV_PROJECT_ENVIRONMENT: /venv
+      UV_LINK_MODE: copy
+    command: sh -c "uv sync --quiet && uv run python __main__.py"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 9080), 2)"]
+      interval: 3s
+      retries: 60
+
+  register:
+    image: curlimages/curl:latest
+    depends_on:
+      restate: { condition: service_healthy }
+      agent: { condition: service_healthy }
+    command: ["-sf", "http://restate:9070/deployments", "--json", "{\"uri\": \"http://agent:9080\", \"force\": true}"]
+
+volumes:
+  uv-cache:

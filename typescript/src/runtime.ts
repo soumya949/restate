@@ -18,6 +18,8 @@ export interface SpanScopeInfo {
   agentName: string | null;
   sessionId: string;
   multiAgentSessionId: string;
+  /** A human already approved this activity; its own spans must not ask again. */
+  approved: boolean;
 }
 
 /**

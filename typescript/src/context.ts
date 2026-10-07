@@ -8,7 +8,7 @@
 
 import type * as restate from "@restatedev/restate-sdk";
 
-import { OpenBoxContractError } from "./errors.js";
+import { OpenBoxContractError, type GovernanceHaltError } from "./errors.js";
 import type { OpenBoxRestate } from "./runtime.js";
 
 export const HEADER_MULTI_AGENT_SESSION_ID = "x-openbox-multi-agent-session-id";
@@ -25,6 +25,8 @@ export interface GovernanceContext {
   readonly multiAgentSessionId: string;
   readonly parentWorkflowId: string | null;
   readonly parentActivityId: string | null;
+  /** Parent agent's DID (informational; the child sends Handoff with it, never trusted for auth). */
+  readonly parentAgentDid: string | null;
   readonly agentName: string | null;
   readonly service: string;
   readonly handler: string;
@@ -33,6 +35,8 @@ export interface GovernanceContext {
   readonly limitKey: string | null;
   /** Set after a HALT has been thrown in this attempt; short-circuits later governed calls. */
   halted: boolean;
+  /** The HALT that was thrown, rethrown by later short-circuits so the real reason and policy survive. */
+  haltError: GovernanceHaltError | null;
   /** Per-name counters for steps that have no toolCallId (deterministic: program order). */
   readonly nameCounters: Map<string, number>;
   readonly usedActivityIds: Set<string>;
@@ -74,6 +78,7 @@ export function createGovernanceContext<I>(
     multiAgentSessionId: headers.get(HEADER_MULTI_AGENT_SESSION_ID) ?? `mas:${workflowId}`,
     parentWorkflowId: headers.get(HEADER_PARENT_WORKFLOW_ID) ?? null,
     parentActivityId: headers.get(HEADER_PARENT_ACTIVITY_ID) ?? null,
+    parentAgentDid: headers.get(HEADER_PARENT_AGENT_DID) ?? null,
     agentName: init.agentName ?? rt.config.restate.agentName ?? null,
     service: target.service,
     handler: target.handler,
@@ -81,6 +86,7 @@ export function createGovernanceContext<I>(
     scope: req.scope ?? null,
     limitKey: req.limitKey ?? null,
     halted: false,
+    haltError: null,
     nameCounters: new Map(),
     usedActivityIds: new Set(),
     vobjWarningLogged: false
