@@ -45,7 +45,7 @@
     "ci:check": "npm run lint && npm run typecheck && npm run test && npm run build && npm run import:check",
     "prepublishOnly": "npm run ci:check",
     "test:live": "vitest run test/live",
-    "pack:examples": "npm run build && npm pack --pack-destination ../examples/.packs"
+    "pack:examples": "npm run build && node -e \"require('fs').mkdirSync('../examples/.packs',{recursive:true})\" && npm pack --pack-destination ../examples/.packs"
   },
   "dependencies": {
     "@openbox-ai/openbox-sdk-ts": "^2.1.0"
