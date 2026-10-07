@@ -1,0 +1,27 @@
+{
+  "name": "openbox-restate-example-ts-multi-agent",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Two governed agents (lead → research) in one OpenBox Multi-Agent Session",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmitOnError",
+    "start:research": "tsx ./src/research.ts",
+    "start:lead": "tsx ./src/lead.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/mcp": "^2.0.1",
+    "@ai-sdk/openai": "^4.0.17",
+    "@openbox-ai/openbox-restate-sdk": "file:../.packs/openbox-ai-openbox-restate-sdk-0.1.0.tgz",
+    "@restatedev/restate-sdk": "^1.17.2",
+    "@restatedev/vercel-ai-middleware": "^0.4.0",
+    "ai": "^7.0.2",
+    "superjson": "^2.2.2",
+    "zod": "^4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.2"
+  }
+}

@@ -61,12 +61,22 @@ class RestateSpanAdapter:
         self._lock = threading.Lock()
         # Per-run HALT requests from completed spans (the base store's halt flag is process-wide).
         self._halted_runs: set[tuple[str, str]] = set()
+        #: Activities currently running whose ActivityStarted was approved by a human.
+        self.approved_activities: set[tuple[str, str]] = set()
 
     # Span events carry event_type ActivityStarted + the activity's type, so an activity-level
-    # approval rule also matches the tool's own spans. Approval is keyed on (workflow, run,
-    # activity): the activity approval governed_run already waited for durably covers them.
+    # approval rule also matches the tool's own spans. When the activity itself was approved
+    # (governed_run waited for that durably), its spans pass without asking again. Otherwise:
+    # one poll, no waiting, and a block unless Core already reports the activity approved.
+
+    def _already_approved(self, context: ActivityContext | None) -> bool:
+        if context is None or not context.workflow_id or not context.activity_id:
+            return False
+        return (context.workflow_id, context.activity_id) in self.approved_activities
 
     async def handle_approval(self, result: EvaluationResult, context: ActivityContext | None = None) -> None:
+        if self._already_approved(context):
+            return
         ids = _ids(context)
         if ids is not None:
             try:
@@ -78,7 +88,9 @@ class RestateSpanAdapter:
         raise tagged_hook_error("hook_block", _SPAN_APPROVAL_NOT_GRANTED, None)
 
     def handle_approval_sync(self, result: EvaluationResult, context: ActivityContext | None = None) -> None:
-        """Sync HTTP clients (requests, urllib): same single poll, no waiting."""
+        """Sync HTTP clients (requests, urllib): same rule, same single poll, no waiting."""
+        if self._already_approved(context):
+            return
         ids = _ids(context)
         if ids is not None:
             try:
@@ -128,10 +140,14 @@ class _Binder:
                 multi_agent_session_id=info.multi_agent_session_id,
             )
         )
+        key = (info.workflow_id, info.activity_id)
+        if info.approved:
+            self._adapter.approved_activities.add(key)
         try:
             yield
         finally:
             self._store.reset(token)
+            self._adapter.approved_activities.discard(key)
 
     def is_halt_requested(self, workflow_id: str, run_id: str) -> bool:
         return self._adapter.is_halt_requested(workflow_id, run_id)

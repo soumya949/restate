@@ -1,20 +1,23 @@
 {
-  "name": "openbox-restate-example-ts-restate-only",
+  "name": "openbox-restate-example-ts-vercel-ai",
   "private": true,
   "version": "0.1.0",
-  "description": "Restate durable agent (no framework) governed by OpenBox",
+  "description": "Restate + Vercel AI SDK agent governed by OpenBox",
   "type": "module",
   "scripts": {
     "build": "tsc --noEmitOnError",
-    "dev": "tsx watch ./src/agent.ts",
-    "start": "tsx ./src/agent.ts"
+    "dev": "tsx watch ./src/app.ts",
+    "start": "tsx ./src/app.ts"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.12",
+    "@ai-sdk/mcp": "^2.0.1",
+    "@ai-sdk/openai": "^4.0.17",
     "@openbox-ai/openbox-restate-sdk": "file:../.packs/openbox-ai-openbox-restate-sdk-0.1.0.tgz",
     "@restatedev/restate-sdk": "^1.17.2",
-    "ai": "^6.0.41",
-    "zod": "^4.3.6"
+    "@restatedev/vercel-ai-middleware": "^0.4.0",
+    "ai": "^7.0.2",
+    "superjson": "^2.2.2",
+    "zod": "^4.3"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

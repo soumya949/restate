@@ -81,9 +81,24 @@ async def test_span_halt_ends_the_invocation(call: Any) -> None:
 async def test_approved_activity_spans_pass_the_same_approval_rule(call: Any) -> None:
     # Like a dashboard rule "activity_type = send_email AND event_type = ActivityStarted": it matches the spans too.
     core.on_activity("send_email", "ActivityStarted", {"verdict": "require_approval", "reason": "email needs review"})
-    core.script_approval("call_1", {"verdict": "allow", "reason": "approved"})
+    # Live Core reports the span's own approval as still pending after the activity was approved:
+    # the first poll (the activity wait) says allow, every later poll says pending.
+    core.script_approval("call_1", {"verdict": "allow", "reason": "approved"}, {"verdict": "require_approval"})
     r = await tool(call, "send_email")
     assert r.status_code == 200, r.text
     assert r.json() == {"blocked": False, "result": {"ok": True}}
     assert api_hits["n"] == 1
     assert stages(hook_evals("send_email")) == ["started", "completed"]
+    assert len(core.polls()) == 1  # the span never asked again
+
+
+async def test_span_only_approval_on_unapproved_activity_fails_safe_as_block(call: Any) -> None:
+    core.rule(
+        lambda b: {"verdict": "require_approval", "reason": "review uploads"}
+        if b.get("hook_trigger") is True and b.get("activity_type") == "upload"
+        else None
+    )
+    r = await tool(call, "upload")
+    assert r.status_code == 200, r.text
+    assert r.json()["blocked"] is True
+    assert api_hits["n"] == 0

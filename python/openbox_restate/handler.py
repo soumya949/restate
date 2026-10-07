@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 import restate
+from openbox_core.contracts.events import EventEnvelope
 from restate.exceptions import TerminalError
 
 from .approvals import wait_for_approval
@@ -23,11 +24,13 @@ from .errors import GovernanceBlockedError, GovernanceHaltError
 from .events import (
     activity_started_event,
     error_info_of,
+    handoff_event,
     user_prompt_event,
     workflow_completed_event,
     workflow_failed_event,
     workflow_started_event,
 )
+from .governed_run import halted_error, record_halt
 from .ids import END_ACTIVITY_SUFFIX, START_ACTIVITY_SUFFIX, StepNames
 from .runtime import OpenBoxRestate, get_default_runtime
 from .steps import best_effort, evaluate_step
@@ -69,22 +72,27 @@ def openbox_handler(
                 input=input,
             )
             try:
-                # 1. Start: WorkflowStarted (+ user prompt) in one journaled step.
+                # 1. Start: WorkflowStarted (+ Handoff when called by a governed parent, + user prompt),
+                #    in one journaled step.
                 prompt = prompt_from(input) if prompt_from else None
-                start = await evaluate_step(
-                    ctx,
-                    g,
-                    StepNames.start,
-                    lambda: [
+
+                def start_events() -> list[EventEnvelope]:
+                    hand = handoff_event(g)
+                    return [
                         workflow_started_event(g, StepNames.start, input, capture_input),
+                        *([hand] if hand else []),
                         *([user_prompt_event(g, StepNames.start, prompt)] if prompt else []),
-                    ],
-                )
+                    ]
+
+                start = await evaluate_step(ctx, g, StepNames.start, start_events)
                 await _enforce_lifecycle(ctx, g, start, input, "start")
 
-                # 2. User code.
+                # 2. User code. A HALT that user code (or a framework) caught and swallowed still
+                #    ends the session, reported as failed.
                 try:
                     output = await fn(ctx, *args)
+                    if g.halted:
+                        raise halted_error(g)
                 except TerminalError as err:
                     err_info = error_info_of(err)
                     await best_effort(
@@ -98,9 +106,6 @@ def openbox_handler(
                     )
                     raise
                 # Non-terminal exceptions propagate untouched: Restate retries, nothing is reported.
-
-                if g.halted:
-                    raise GovernanceHaltError("session was halted earlier in this invocation")
 
                 # 3. End: output guardrails may redact or block the returned value.
                 end = await evaluate_step(
@@ -123,8 +128,7 @@ async def _enforce_lifecycle(
     if d.kind == "proceed":
         return
     if d.kind == "halt":
-        g.halted = True
-        raise GovernanceHaltError(d.reason, **details_of(record))
+        raise record_halt(g, GovernanceHaltError(d.reason, **details_of(record)))
     if d.kind == "blocked":
         raise GovernanceBlockedError(d.reason, **details_of(record))
     # Workflow-level REQUIRE_APPROVAL: start = gate before user code; end = output review.
@@ -148,8 +152,7 @@ async def _approval_gate(
     )
     d = decide(gate, g.rt.config.restate.hitl_enabled)
     if d.kind == "halt":
-        g.halted = True
-        raise GovernanceHaltError(d.reason, **details_of(gate))
+        raise record_halt(g, GovernanceHaltError(d.reason, **details_of(gate)))
     if d.kind == "blocked":
         raise GovernanceBlockedError(d.reason, **details_of(gate))
     if d.kind == "approval":

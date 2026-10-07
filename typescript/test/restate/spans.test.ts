@@ -138,10 +138,20 @@ describe("span capture", () => {
   it("an approved activity's spans pass the same REQUIRE_APPROVAL rule", async () => {
     // Like a dashboard rule "activity_type = send_email AND event_type = ActivityStarted": it matches the spans too.
     core.onActivity("send_email", "ActivityStarted", { verdict: "require_approval", reason: "email needs review" });
-    core.scriptApproval("call_1", { verdict: "allow", reason: "approved" });
+    // Live Core reports the span's own approval as still pending after the activity was approved:
+    // the first poll (the activity wait) says allow, every later poll says pending.
+    core.scriptApproval("call_1", { verdict: "allow", reason: "approved" }, { verdict: "require_approval" });
     const out = await call("send_email");
     expect(out).toMatchObject({ blocked: false, result: { ok: true } });
     expect(hits).toBe(1);
     expect(stages(hookEvals("send_email"))).toEqual(["started", "completed"]);
+    expect(core.polls()).toHaveLength(1); // the span never asked again
+  });
+
+  it("a span-only REQUIRE_APPROVAL on an activity nobody approved fails safe as a block", async () => {
+    core.rule((b) => (b["hook_trigger"] === true && b["activity_type"] === "upload" ? { verdict: "require_approval", reason: "review uploads" } : undefined));
+    const out = await call("upload");
+    expect(out).toMatchObject({ blocked: true });
+    expect(hits).toBe(0);
   });
 });

@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .errors import OpenBoxContractError
+from .errors import GovernanceHaltError, OpenBoxContractError
 
 if TYPE_CHECKING:
     import restate
@@ -35,11 +35,15 @@ class GovernanceContext:
     multi_agent_session_id: str
     parent_workflow_id: str | None
     parent_activity_id: str | None
+    #: Parent agent's DID (informational; the child sends Handoff with it, never trusted for auth).
+    parent_agent_did: str | None
     agent_name: str | None
     key: str | None
     scope: str | None
     limit_key: str | None
     halted: bool = False
+    #: The HALT that was raised, re-raised by later short-circuits so the real reason and policy survive.
+    halt_error: GovernanceHaltError | None = None
     name_counters: dict[str, int] = field(default_factory=dict)
     used_activity_ids: set[str] = field(default_factory=set)
     vobj_warning_logged: bool = False
@@ -95,6 +99,7 @@ def create_governance_context(
         multi_agent_session_id=_header(headers, HEADER_MULTI_AGENT_SESSION_ID) or f"mas:{workflow_id}",
         parent_workflow_id=_header(headers, HEADER_PARENT_WORKFLOW_ID),
         parent_activity_id=_header(headers, HEADER_PARENT_ACTIVITY_ID),
+        parent_agent_did=_header(headers, HEADER_PARENT_AGENT_DID),
         agent_name=agent_name,
         key=key,
         scope=getattr(req, "scope", None),

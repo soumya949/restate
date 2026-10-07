@@ -37,19 +37,30 @@ const SPAN_APPROVAL_NOT_GRANTED =
   "span requires approval, but its activity has not been approved; span-level approvals cannot wait inside ctx.run " +
   "on Restate, so put the approval rule on the activity (event_type ActivityStarted, no hook_trigger)";
 
+function approvalKey(workflowId: string, activityId: string): string {
+  return `${workflowId}/${activityId}`;
+}
+
 /** Turns span verdicts into errors that survive the ctx.run boundary. */
 class RestateSpanAdapter implements FrameworkAdapter {
   readonly name = "restate";
+
+  /** Activities currently running whose ActivityStarted was approved by a human (key: workflow/activity). */
+  readonly approvedActivities = new Set<string>();
 
   constructor(private readonly client: OpenBoxClient) {}
 
   /**
    * Span events carry `event_type: ActivityStarted` + the activity's type, so an
-   * activity-level approval rule also matches the tool's own spans. Approval is
-   * keyed on (workflow, run, activity): the activity approval the handler
-   * already waited for durably covers them. One poll, no waiting.
+   * activity-level approval rule also matches the tool's own spans. When the
+   * activity itself was approved (governedRun waited for that durably), its
+   * spans pass without asking again. Otherwise: one poll, no waiting, and a
+   * block unless Core already reports the activity approved.
    */
   async handleApproval(_result: EvaluationResult, context?: ActivityContext | null): Promise<void> {
+    if (context?.workflowId && context.activityId && this.approvedActivities.has(approvalKey(context.workflowId, context.activityId))) {
+      return;
+    }
     if (context?.workflowId && context.runId && context.activityId) {
       const approval = await this.client.pollApproval(context.workflowId, context.runId, context.activityId).catch(() => null);
       if (approval?.allowShaped) return;
@@ -103,7 +114,8 @@ export function enableOpenBoxSpans(options: OpenBoxSpansOptions = {}): OpenBoxSp
   if (rt.spanBinder) throw new OpenBoxInstrumentationError("OpenBox spans are already enabled for this runtime");
 
   // Shares the runtime's client (same identity and auth). Never closed here: the client belongs to `rt`.
-  const base = new OpenBoxRuntime(rt.config.base, { client: rt.client, adapter: new RestateSpanAdapter(rt.client), logger: rt.logger });
+  const adapter = new RestateSpanAdapter(rt.client);
+  const base = new OpenBoxRuntime(rt.config.base, { client: rt.client, adapter, logger: rt.logger });
   const controller: OpenBoxInstrumentationController = initOpenBoxInstrumentation({
     runtime: base,
     strict: options.strict ?? false,
@@ -123,7 +135,10 @@ export function enableOpenBoxSpans(options: OpenBoxSpansOptions = {}): OpenBoxSp
         sessionId: info.sessionId,
         multiAgentSessionId: info.multiAgentSessionId
       });
-      return base.contextStore.activityScope(activity, fn);
+      if (!info.approved) return base.contextStore.activityScope(activity, fn);
+      const key = approvalKey(info.workflowId, info.activityId);
+      adapter.approvedActivities.add(key);
+      return base.contextStore.activityScope(activity, fn).finally(() => adapter.approvedActivities.delete(key));
     },
     isHaltRequested(workflowId: string, runId: string): boolean {
       return base.contextStore.isHaltRequested(workflowId, runId);

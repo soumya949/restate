@@ -29,6 +29,8 @@ class SpanScopeInfo:
     agent_name: str | None
     session_id: str
     multi_agent_session_id: str
+    #: A human already approved this activity; its own spans must not ask again.
+    approved: bool = False
 
 
 class SpanBinder(Protocol):

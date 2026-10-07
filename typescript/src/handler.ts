@@ -17,12 +17,14 @@ import { GovernanceBlockedError, GovernanceHaltError } from "./errors.js";
 import {
   activityStartedEvent,
   errorInfoOf,
+  handoffEvent,
   userPromptEvent,
   workflowCompletedEvent,
   workflowFailedEvent,
   workflowStartedEvent
 } from "./events.js";
 import { END_ACTIVITY_SUFFIX, START_ACTIVITY_SUFFIX, stepNames } from "./ids.js";
+import { haltedError, recordHalt } from "./governed-run.js";
 import { getDefaultRuntime, type OpenBoxRestate } from "./runtime.js";
 import { bestEffort, evaluateStep } from "./steps.js";
 import type { VerdictRecord } from "./verdict-record.js";
@@ -61,18 +63,24 @@ export function openboxHandler<C extends restate.Context, I, O>(
     const captureInput = options.captureInput ?? true;
     const captureOutput = options.captureOutput ?? true;
 
-    // 1. Start: WorkflowStarted (+ user prompt) in one journaled step.
+    // 1. Start: WorkflowStarted (+ Handoff when called by a governed parent, + user prompt) in one journaled step.
     const prompt = options.promptFrom?.(input);
-    const start = await evaluateStep(ctx, g, stepNames.start, () => [
-      workflowStartedEvent(g, stepNames.start, input, captureInput),
-      ...(prompt ? [userPromptEvent(g, stepNames.start, prompt)] : [])
-    ]);
+    const start = await evaluateStep(ctx, g, stepNames.start, () => {
+      const hand = handoffEvent(g);
+      return [
+        workflowStartedEvent(g, stepNames.start, input, captureInput),
+        ...(hand ? [hand] : []),
+        ...(prompt ? [userPromptEvent(g, stepNames.start, prompt)] : [])
+      ];
+    });
     await enforceLifecycle(ctx, g, start, input, "start");
 
-    // 2. User code.
+    // 2. User code. A HALT that user code (or a framework, e.g. the AI SDK turning a tool
+    // error into a tool result) caught and swallowed still ends the session, reported as failed.
     let output: O;
     try {
       output = await fn(ctx, input);
+      if (g.halted) throw haltedError(g);
     } catch (err) {
       if (err instanceof restate.TerminalError && !restate.internal.isSuspendedError(err)) {
         await bestEffort(g, "WorkflowFailed", () =>
@@ -81,9 +89,6 @@ export function openboxHandler<C extends restate.Context, I, O>(
       }
       throw err;
     }
-
-    // A HALT that user code caught and swallowed still ends the session.
-    if (g.halted) throw new GovernanceHaltError("session was halted earlier in this invocation");
 
     // 3. End: output guardrails may redact or block the returned value.
     const end = await evaluateStep(ctx, g, stepNames.end, () => [
@@ -106,8 +111,7 @@ async function enforceLifecycle(
     case "proceed":
       return;
     case "halt":
-      g.halted = true;
-      throw new GovernanceHaltError(d.reason, detailsOf(record));
+      throw recordHalt(g, new GovernanceHaltError(d.reason, detailsOf(record)));
     case "blocked":
       throw new GovernanceBlockedError(d.reason, detailsOf(record));
     case "approval":
@@ -141,8 +145,7 @@ async function approvalGate(
     case "proceed":
       return;
     case "halt":
-      g.halted = true;
-      throw new GovernanceHaltError(d.reason, detailsOf(gate));
+      throw recordHalt(g, new GovernanceHaltError(d.reason, detailsOf(gate)));
     case "blocked":
       throw new GovernanceBlockedError(d.reason, detailsOf(gate));
     case "approval":

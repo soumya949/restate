@@ -73,10 +73,14 @@ async def restate_ingress() -> AsyncIterator[str]:
 @pytest_asyncio.fixture
 async def call(restate_ingress: str) -> Any:
     from .app import api_hits, core, counters
+    from .p2_app import agent_core, child_core, parent_core, ran
 
     core.reset()
     counters["tool"] = 0
     api_hits["n"] = 0
+    for c in (agent_core, parent_core, child_core):
+        c.reset()
+    ran.clear()
     async with httpx.AsyncClient(timeout=60) as http:
 
         async def _call(handler: str, body: Any = None) -> httpx.Response:

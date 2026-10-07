@@ -17,7 +17,7 @@ const FORBIDDEN = [
   /^@opentelemetry\//,
   /^(pg|redis|mysql2|mongodb)$/,
   /^@openbox-ai\/openbox-sdk-ts\/(instrumentation|runtime|adapters)$/,
-  /^\.\/instrumentation\.js$/ // nothing else may pull in the opt-in subpath
+  /^\.\/(instrumentation|vercel-ai)\.js$/ // nothing else may pull in an opt-in subpath
 ];
 
 function walk(dir) {
@@ -27,8 +27,9 @@ function walk(dir) {
   });
 }
 
-// The ./instrumentation subpath is opt-in and patches globals by design; the root never imports it.
-const OPT_IN = new Set([join(DIST, "instrumentation.js")]);
+// Opt-in subpaths: ./instrumentation patches globals, ./vercel-ai is the only module that may use `ai`.
+// The root never imports either (enforced by the last FORBIDDEN entry).
+const OPT_IN = new Set([join(DIST, "instrumentation.js"), join(DIST, "vercel-ai.js")]);
 const bad = [];
 for (const file of walk(DIST)) {
   if (OPT_IN.has(file)) continue;

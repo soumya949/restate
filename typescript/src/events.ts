@@ -10,6 +10,7 @@
 import {
   activityCompleted,
   activityStarted,
+  handoff,
   signalReceived,
   workflowCompleted,
   workflowFailed,
@@ -68,6 +69,16 @@ function base(g: GovernanceContext, stepName: string, more: Record<string, JsonV
 
 export function workflowStartedEvent(g: GovernanceContext, stepName: string, input: unknown, captureInput: boolean): EventEnvelope {
   return workflowStarted(base(g, stepName, captureInput ? { activity_input: [toJson(input)] } : {}));
+}
+
+/**
+ * Multi-agent Handoff, sent by the CHILD (architecture §12.2): Core takes the
+ * receiving agent from the signed identity of the sender, so the child's own
+ * client sends `from_agent_did = parent DID` once it joins the parent's session.
+ */
+export function handoffEvent(g: GovernanceContext): EventEnvelope | null {
+  if (!g.parentAgentDid || !g.parentWorkflowId) return null;
+  return handoff({ fromAgentDid: g.parentAgentDid, multiAgentSessionId: g.multiAgentSessionId });
 }
 
 export function userPromptEvent(g: GovernanceContext, stepName: string, prompt: string): EventEnvelope {

@@ -1,0 +1,20 @@
+[project]
+name = "openbox-restate-example-py-openai-agents"
+version = "0.1.0"
+description = "Restate + OpenAI Agents SDK agent governed by OpenBox"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx",
+    "hypercorn",
+    "restate-sdk[serde]>=1.0.5",
+    "pydantic>=2.11.9",
+    # Restate's template pins 0.6.5, which breaks with current `openai`; this is the version the SDK is tested on.
+    "openai-agents>=0.23.1",
+    "openbox-restate-sdk[openai,spans]",
+]
+
+[tool.uv.sources]
+openbox-restate-sdk = { path = "../../python", editable = true }
+
+[tool.uv]
+package = false

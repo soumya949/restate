@@ -242,4 +242,6 @@ async def tool(ctx: restate.Context, name: str) -> dict[str, Any]:
     return {"blocked": is_blocked(r), "result": _out(r)}
 
 
-app = restate.app(services=[agent, spans])
+from .p2_app import SERVICES as P2_SERVICES  # noqa: E402
+
+app = restate.app(services=[agent, spans, *P2_SERVICES])

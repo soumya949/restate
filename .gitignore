@@ -27,3 +27,6 @@ restate-data/
 Thumbs.db
 .idea/
 .vscode/
+
+# packed SDK tarballs for the examples (npm run pack:examples)
+examples/.packs/

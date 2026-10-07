@@ -8,8 +8,8 @@ When a policy needs human approval, the invocation **suspends durably** until a 
 
 | Package | Path | Status |
 |---|---|---|
-| `@openbox-ai/openbox-restate-sdk` (TypeScript) | [`typescript/`](typescript) | P0 + P1 done |
-| `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P1 done |
+| `@openbox-ai/openbox-restate-sdk` (TypeScript) | [`typescript/`](typescript) | P0–P2 done |
+| `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P0–P2 done |
 
 Design docs: [`../openbox-restate-sdk-prd.md`](../openbox-restate-sdk-prd.md) and [`../architecture.md`](../architecture.md). Section numbers in code comments (§x.y) refer to `architecture.md`.
 
@@ -54,6 +54,62 @@ async def run(ctx: restate.Context, prompt: Prompt) -> str:
     result = await governed_call(ctx, tool_name=name, tool_call_id=tc.id, arguments=args, run=run_tool)
 ```
 
+## Frameworks (one diff on top of Restate's templates)
+
+**Vercel AI SDK** (TypeScript, `ai` v6 or v7): wrap the tools passed to `generateText`.
+
+```ts
+import { governTools } from "@openbox-ai/openbox-restate-sdk/vercel-ai";
+
+const run = openboxHandler(async (ctx: restate.Context, { prompt }: { prompt: string }) => {
+  const { text } = await generateText({
+    model: wrapLanguageModel({ model: openai("gpt-5.4"), middleware: durableCalls(ctx) }),
+    prompt,
+    tools: governTools(ctx, { getWeather: tool({ inputSchema, execute }) }),
+  });
+  return text;
+}, { agentName: "my-agent", promptFrom: (i) => i.prompt });
+```
+
+- Each tool is governed under the AI SDK's `toolCallId`.
+- A BLOCK goes back to the model as the tool result.
+- Tool calls from one step run their checks one at a time, in call order, even though the AI SDK starts them concurrently.
+- A HALT ends the invocation, even though the AI SDK turns tool errors into tool results.
+
+**OpenAI Agents SDK** (Python): `pip install "openbox-restate-sdk[openai]"` and govern the agent before `DurableRunner.run`.
+
+```python
+from openbox_restate.openai import govern_agent
+
+@agent_service.handler()
+@openbox_handler(agent_name="my-agent", prompt_from=lambda r: r.message)
+async def run(_ctx: restate.Context, req: Prompt) -> str:
+    result = await DurableRunner.run(govern_agent(assistant), req.message)
+    return result.final_output
+```
+
+- Every `FunctionTool` of the agent and its handoff agents is governed under the model's `tool_call_id`.
+- A BLOCK goes back to the model as `"Blocked by policy: …"`.
+- A HALT is raised as an exception that is both an `AgentsException` and a `TerminalError`, so the Agents SDK does not retry it.
+- `@governed_function_tool` builds a single governed tool directly.
+- Hosted tools (web search, hosted MCP) run at OpenAI and cannot be checked before they run.
+
+**Parallel tool calls** (`governedParallel` / `governed_parallel`): the pre-checks run one at a time in call order, the tools run concurrently, then the post-checks run in call order. This keeps the journal deterministic.
+
+## Multi-agent
+
+A parent agent calls a child agent over Restate RPC with `governedSubAgent` / `governed_sub_agent`:
+
+```ts
+const report = await governedSubAgent(ctx, { agentName: "research", input: { question }, toolCallId },
+  (input, headers) => ctx.serviceClient(Research).run(input, restate.rpc.opts({ headers })));
+```
+
+- **The delegation is governed.** It is an activity, `call:<agent>` with `__openbox.tool_type = "a2a"`, so policies can block, halt or require approval for it.
+- **The child joins the parent's session.** It is a normal `openboxHandler`. The headers make it adopt the parent's `multi_agent_session_id` and link `parent_workflow_id` / `parent_activity_id`.
+- **The child sends the Handoff.** When the parent has a DID, the child sends `Handoff{from_agent_did: <parent DID>}` with its own signed client, because Core identifies the receiver from the signature.
+- **Each agent keeps its own identity.** Every agent uses its own OpenBox API key and DID.
+
 ## Spans (HTTP / file / DB calls inside a tool)
 
 Opt in once at startup, after the env is loaded:
@@ -66,7 +122,10 @@ enableOpenBoxSpans(); // { databases: ["pg"] } to also govern a DB driver
 Every call a governed tool makes (fetch, node:http/https, fs, opted-in DB drivers) is reported as a span of that tool's activity, with `stage: started` before it goes out and `stage: completed` after. Each span gets its own verdict.
 - **Exactly once.** Spans fire only when the tool's `ctx.run` closure really executes, never on replay.
 - **Span BLOCK / HALT.** The call never goes out. BLOCK returns a `BlockedResult`; HALT ends the session. Restate does not retry either.
-- **Approval rules.** Span events are sent as `event_type: ActivityStarted` with `hook_trigger: true` and the tool's `activity_type`, so an activity approval rule also matches the tool's spans. They pass because the activity was already approved. A span-only approval cannot wait inside `ctx.run`, so it fails safe as a block.
+- **Approval rules.** Span events are sent as `event_type: ActivityStarted` with `hook_trigger: true` and the tool's `activity_type`, so an activity approval rule also matches the tool's spans.
+  - When a human already approved the activity, its spans pass without asking again.
+  - A span-only approval on an activity nobody approved cannot wait inside `ctx.run`, so it fails safe as a block.
+  - To keep such a rule from matching spans at all, add `hook_trigger is not true` to it.
 - **LLM calls are not spans.** Calls made outside a governed tool, such as the LLM call itself, are skipped with a log line.
 
 Python: `pip install "openbox-restate-sdk[spans]"`, then call it once before serving. It covers httpx, requests, urllib3 and urllib, plus DB drivers and file I/O per the base config.
@@ -108,22 +167,27 @@ The integration tests use a routing fake OpenBox Core that keeps a request ledge
 
 ## Examples
 
-| Example | Run |
-|---|---|
-| [`examples/ts-restate-only`](examples/ts-restate-only) | `npm install && npm start`, then `restate deployments register localhost:9080` |
-| [`examples/py-restate-only`](examples/py-restate-only) | `docker compose -f examples/py-restate-only/docker-compose.yml up` |
+The TypeScript examples install the SDK from a packed tarball, as a real install would. Run `cd typescript && npm run pack:examples` once, and again after SDK changes.
 
-Invoke either example:
+| Example | What | Run |
+|---|---|---|
+| [`examples/ts-restate-only`](examples/ts-restate-only) | raw agent loop + `governedCall` | `npm install && npm start`, register `localhost:9080` |
+| [`examples/ts-vercel-ai`](examples/ts-vercel-ai) | Vercel AI SDK + `governTools` | `npm install && npm start`, register `localhost:9081` |
+| [`examples/ts-multi-agent`](examples/ts-multi-agent) | lead → research over RPC, two OpenBox agents | `npm run start:research` and `npm run start:lead`, register `:9083` and `:9082` |
+| [`examples/py-restate-only`](examples/py-restate-only) | raw agent loop + `governed_call` | `docker compose -f examples/py-restate-only/docker-compose.yml up` |
+| [`examples/py-openai-agents`](examples/py-openai-agents) | OpenAI Agents SDK + `govern_agent` | `docker compose -f examples/py-openai-agents/docker-compose.yml up` |
 
-```bash
-curl localhost:8080/agent/run --json '{"message": "What is the weather in Paris? Then email it to bob@example.com"}'
-```
+The multi-agent example also needs the child agent's credentials in `.env`: `CHILD_OPENBOX_API_KEY`, `CHILD_OPENBOX_AGENT_DID` and `CHILD_OPENBOX_AGENT_PRIVATE_KEY`.
 
-Each example has four tools, one per sandbox policy:
+Each single-agent example has four tools, one per sandbox policy:
 - `get_weather`: ALLOW
 - `delete_records`: BLOCK
 - `wire_money`: HALT
 - `send_email`: REQUIRE_APPROVAL. Approve or reject it in the OpenBox dashboard and the agent resumes.
+
+## Troubleshooting
+
+- **A HALT or BLOCK is retried forever (HTTP 500 in Restate).** Two copies of `@restatedev/restate-sdk` are loaded, so `instanceof TerminalError` fails. This happens with `npm link`, or with `file:` links to a folder that has its own `node_modules`. Install the SDK so it shares your app's `@restatedev/restate-sdk` (it is a peer dependency).
 
 ## Rollout rule
 
