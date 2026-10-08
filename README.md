@@ -13,6 +13,151 @@ When a policy needs human approval, the invocation **suspends durably** until a 
 | `@openbox-ai/openbox-restate-sdk` (TypeScript) | [`typescript/`](typescript) | P0–P3 done (not yet published) |
 | `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P0–P4 done (not yet published) |
 
+## What this does, in plain words
+
+You have an AI agent that can do things: look up the weather, send emails, move money. This SDK makes the agent **ask OpenBox before every action**, and OpenBox answers based on the rules you set in its dashboard:
+
+| OpenBox says | What the agent does |
+|---|---|
+| ✅ Allow | Does the action |
+| ⛔ Block | Skips it and tells you why |
+| 🛑 Halt | Stops completely |
+| ✋ Needs approval | Waits until someone clicks Approve or Reject in the OpenBox dashboard |
+| 🔒 Guardrail | Hides private data (e.g. email addresses) before the AI model sees it |
+
+[Restate](https://restate.dev) is what keeps the agent running reliably: if it crashes or restarts, it continues where it stopped and never repeats an action.
+
+## Try it in 10 minutes (no coding needed)
+
+This runs a ready-made demo agent on your computer.
+
+### 1. Install two programs
+
+- **Docker Desktop**: [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/). Install it, open it, and wait until it says it is running.
+- **Git**: [git-scm.com/downloads](https://git-scm.com/downloads)
+
+### 2. Get your keys
+
+You need three things. Keep them private: never share them or post them online.
+
+- **An OpenBox agent:** in the OpenBox dashboard, create an agent and save its **API key**, **Agent DID** and **private key**.
+- **An OpenAI API key:** from [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+
+### 3. Download this project
+
+Open a terminal (on Windows: **PowerShell**; on Mac: **Terminal**) and run:
+
+```bash
+git clone https://github.com/soumya949/restate.git
+cd restate
+```
+
+### 4. Add your keys
+
+Make your own settings file from the template:
+
+```bash
+# Windows (PowerShell)
+copy .env.example .env
+
+# Mac / Linux
+cp .env.example .env
+```
+
+Open `.env` in any text editor (Notepad works) and fill in these lines:
+
+```bash
+OPENBOX_API_KEY=your OpenBox API key
+OPENBOX_AGENT_DID=your Agent DID
+OPENBOX_AGENT_PRIVATE_KEY=your private key
+OPENAI_API_KEY=your OpenAI key
+```
+
+Save the file. It stays on your computer and is never uploaded.
+
+### 5. Set the rules in OpenBox
+
+In the OpenBox dashboard, add a rule for each of the demo agent's four actions:
+
+| Action | Rule to add |
+|---|---|
+| `get_weather` | Allow |
+| `delete_records` | Block |
+| `wire_money` | Halt |
+| `send_email` | Require approval |
+
+### 6. Start the demo
+
+```bash
+docker compose -f examples/py-openai-agents/docker-compose.yml up
+```
+
+The first start downloads what it needs and takes a few minutes. It is ready when the messages stop scrolling. Leave this window open.
+
+### 7. Talk to the agent
+
+Open a **second** terminal window and send a message:
+
+```powershell
+# Windows (PowerShell)
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/agent/run -ContentType "application/json" -Body '{"message": "What is the weather in Madrid?"}'
+```
+
+```bash
+# Mac / Linux
+curl localhost:8080/agent/run --json '{"message": "What is the weather in Madrid?"}'
+```
+
+The agent answers with the weather. Now try the other rules by changing the message:
+
+| Message | What you should see |
+|---|---|
+| `Delete all records in the users table` | The agent says it was blocked |
+| `Wire 500 dollars to account A1` | The run stops (halted) |
+| `Send an email to bob@example.com saying hi` | The agent waits: approve it in the OpenBox dashboard, and it finishes |
+| `My email is bob@example.com, what is the weather in Paris?` | The AI model only sees `<EMAIL_ADDRESS>` (if you set up a PII guardrail in OpenBox) |
+
+### 8. See what happened
+
+- **OpenBox dashboard:** every action, its decision, how long it took and the AI model's token usage.
+- **Restate dashboard:** open [http://localhost:9070](http://localhost:9070) in your browser to see each run step by step.
+
+### 9. Stop the demo
+
+Press `Ctrl + C` in the first window, then:
+
+```bash
+docker compose -f examples/py-openai-agents/docker-compose.yml down
+```
+
+### If something goes wrong
+
+| Problem | Fix |
+|---|---|
+| `docker: command not found` or "cannot connect" | Open Docker Desktop and wait until it is running |
+| "port is already allocated" | Something else uses port 8080. Start with other ports: set `RESTATE_INGRESS_PORT=18080` and `RESTATE_ADMIN_PORT=19070` (PowerShell: `$env:RESTATE_INGRESS_PORT=18080`), then use those ports in steps 7 and 8 |
+| `401` or "unauthorized" from OpenBox | A key in `.env` is wrong or has extra spaces |
+| Every action is allowed | The rules from step 5 are missing or use a different action name |
+
+Other demo agents (Google ADK, Pydantic AI, LangChain, and TypeScript versions) work the same way; see [Examples](#examples).
+
+## Use it in your own agent
+
+> The packages are not published yet. Until then, use the code from this repository.
+
+Once published, install with:
+
+```bash
+npm install @openbox-ai/openbox-restate-sdk     # TypeScript / JavaScript
+pip install openbox-restate-sdk                 # Python
+```
+
+Then wrap your agent as shown in the quickstarts below. Most frameworks need a one-line change; see [Frameworks](#frameworks-one-diff-on-top-of-restates-templates). Running on Restate Cloud? See [Restate Cloud](#restate-cloud).
+
+---
+
+# Developer reference
+
 ## How it works
 
 1. **`openboxHandler` / `@openbox_handler`** wraps the Restate handler.
