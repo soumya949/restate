@@ -60,4 +60,6 @@ const lead = restate.service({
 
 // <end_here>
 
-restate.serve({ services: [lead], port: Number(process.env["PORT"] ?? 9082) });
+// Restate Cloud: accept only requests signed by your environment (comma-separated publickeyv1_… keys).
+const identityKeys = process.env["RESTATE_IDENTITY_KEYS"]?.split(",").filter(Boolean);
+restate.serve({ services: [lead], port: Number(process.env["PORT"] ?? 9082), ...(identityKeys?.length ? { identityKeys } : {}) });

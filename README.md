@@ -222,6 +222,16 @@ Each single-agent example has four tools, one per sandbox policy:
 - `wire_money`: HALT
 - `send_email`: REQUIRE_APPROVAL. Approve or reject it in the OpenBox dashboard and the agent resumes.
 
+## Restate Cloud
+
+Nothing in the SDK changes for Restate Cloud: your agent and its OpenBox credentials stay on your side, and Restate Cloud calls it.
+
+1. Run the agent where Restate Cloud can reach it, or use Restate's [tunnel client](https://docs.restate.dev/cloud) to connect a private network or your laptop without opening ports.
+2. Set `RESTATE_IDENTITY_KEYS` to the environment's `publickeyv1_…` key (Restate Cloud shows it under **Integration & API keys**). The agent then accepts only requests signed by your environment. All the examples read this variable; in your own code, pass it as `identityKeys` (TypeScript `restate.serve`) or `identity_keys` (Python `restate.app`).
+3. Register the deployment in Restate Cloud, then call the Cloud ingress URL with a Cloud API key (`Authorization: Bearer …`).
+
+The OpenBox variables (`OPENBOX_*`) belong to the agent's environment, not to Restate Cloud. To keep finished runs and their journals visible in the Restate UI, set the service's journal retention (for example `restate services config edit` or the admin API's `journal_retention`).
+
 ## Security
 
 - **Keys.** API keys and private keys are read once into the process-wide client. They are never journaled, logged or forwarded to child agents.

@@ -14,10 +14,13 @@ import { agent } from "./service.js";
 const envFile = new URL("../../../.env", import.meta.url);
 if (existsSync(envFile)) process.loadEnvFile(envFile);
 
+// Restate Cloud: accept only requests signed by your environment (comma-separated publickeyv1_… keys).
+const identityKeys = process.env["RESTATE_IDENTITY_KEYS"]?.split(",").filter(Boolean);
 // <start_here>
 restate.serve({
   services: [agent],
   port: Number(process.env["PORT"] ?? 9084),
+  ...(identityKeys?.length ? { identityKeys } : {}),
   // Every journaled value (tool results, OpenBox verdict records, state) is encrypted before it leaves this process.
   journalValueCodecProvider: async () => aesGcmCodec(keyFromEnv())
 });

@@ -139,4 +139,6 @@ const agentService = restate.service({
   options: { onJournalMismatchErrors: "pause" } // OPENBOX: rollout rule (architecture §10 I7)
 });
 
-restate.serve({ services: [agentService], port: Number(process.env["PORT"] ?? 9080) });
+// Restate Cloud: accept only requests signed by your environment (comma-separated publickeyv1_… keys).
+const identityKeys = process.env["RESTATE_IDENTITY_KEYS"]?.split(",").filter(Boolean);
+restate.serve({ services: [agentService], port: Number(process.env["PORT"] ?? 9080), ...(identityKeys?.length ? { identityKeys } : {}) });
