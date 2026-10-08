@@ -11,7 +11,7 @@ When a policy needs human approval, the invocation **suspends durably** until a 
 | Package | Path | Status |
 |---|---|---|
 | `@openbox-ai/openbox-restate-sdk` (TypeScript) | [`typescript/`](typescript) | P0–P3 done (not yet published) |
-| `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P0–P3 done (not yet published) |
+| `openbox-restate-sdk` / `openbox_restate` (Python) | [`python/`](python) | P0–P4 done (not yet published) |
 
 ## How it works
 
@@ -94,17 +94,34 @@ async def run(_ctx: restate.Context, req: Prompt) -> str:
 - `@governed_function_tool` builds a single governed tool directly.
 - Hosted tools (web search, hosted MCP) run at OpenAI and cannot be checked before they run.
 
+**Google ADK, Pydantic AI, LangChain** (Python): swap Restate's integration class for the OpenBox one. It *is* Restate's class, with governance added inside Restate's turn-ordered tool window and an `llm_call` activity around every model call.
+
+| Framework | Restate's class | OpenBox drop-in | Extra |
+|---|---|---|---|
+| Google ADK | `RestatePlugin()` | `openbox_restate.adk.OpenBoxRestatePlugin()` | `[adk]` |
+| Pydantic AI | `RestateAgent(agent)` | `openbox_restate.pydantic_ai.OpenBoxRestateAgent(agent)` | `[pydantic-ai]` |
+| LangChain | `RestateMiddleware()` | `openbox_restate.langchain.OpenBoxRestateMiddleware()` | `[langchain]` |
+
+Add `@openbox_handler` to the handler as usual. In all three, a BLOCK goes back to the model as the tool result, a HALT ends the invocation, and approvals wait durably. ADK wraps callback errors in `RuntimeError`; `openbox_handler` unwraps governance errors, so they stay terminal.
+
 **Parallel tool calls** (`governedParallel` / `governed_parallel`): the pre-checks run one at a time in call order, the tools run concurrently, then the post-checks run in call order. This keeps the journal deterministic.
 
 ## LLM calls (Model Usage, Cost, "LLM Calls")
 
-Each model call can be reported as an `llm_call` activity carrying the model, the token counts and the completion. This is telemetry only: it is never enforced, and it is sent in one journaled step, so a replay never double-counts it.
+Each model call is governed as an `llm_call` activity carrying the prompt, the model, the token counts and the completion. Both checks are journaled, so a replay never sends them twice. The verdict is enforced like a tool's:
+
+- **Input guardrails** (for example PII redaction) rewrite the latest user prompt **before** the model provider sees it.
+- **HALT** ends the invocation, and **BLOCK** or a failed guardrail refuses the call. Both are terminal, and the model is never called.
+- **REQUIRE_APPROVAL** waits durably for a reviewer, then the call runs.
+
+Guardrails check the latest user prompt. Earlier turns of a conversation are sent as they are in your history.
 
 | Where | How |
 |---|---|
 | Vercel AI SDK | `wrapLanguageModel({ model, middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx)] })`. Put it before `durableCalls`. |
 | OpenAI Agents SDK | Automatic: `govern_agent` adds agent hooks, chained with any hooks you already have |
-| Raw loops | Wrap the journaled LLM call: `governedLlmCall(ctx, { prompt }, () => ctx.run(...), describe)` / `governed_llm_call(ctx, call, describe, prompt=...)`. (`reportLlmCall` / `report_llm_call` reports after the fact, without spans.) |
+| Google ADK, Pydantic AI, LangChain | Automatic: the OpenBox drop-in classes |
+| Raw loops | Wrap the journaled LLM call: `governedLlmCall(ctx, { prompt }, ({ prompt }) => ctx.run(...), describe)` / `governed_llm_call(ctx, lambda approved: ctx.run_typed(...), describe, prompt=...)`. `call` receives the **approved** prompt: build the model request from it. (`reportLlmCall` / `report_llm_call` reports after the fact, without spans, and is telemetry only.) |
 
 With span capture on, the model provider's HTTP request appears as a span of its `llm_call`. The `llm_call` is started before the request, the same way as a governed tool.
 
@@ -192,6 +209,9 @@ The TypeScript examples install the SDK from a packed tarball, as a real install
 | [`examples/ts-multi-agent`](examples/ts-multi-agent) | lead → research over RPC, two OpenBox agents | `npm run start:research` and `npm run start:lead`, register `:9083` and `:9082` |
 | [`examples/ts-journal-encryption`](examples/ts-journal-encryption) | encrypted journal (incl. verdict records) | `npm install && npm start`, then `npm run call` |
 | [`examples/py-restate-only`](examples/py-restate-only) | raw agent loop + `governed_call` | `docker compose -f examples/py-restate-only/docker-compose.yml up` |
+| [`examples/py-google-adk`](examples/py-google-adk) | Google ADK + `OpenBoxRestatePlugin` (OpenAI via LiteLLM) | `docker compose -f examples/py-google-adk/docker-compose.yml up` |
+| [`examples/py-pydantic-ai`](examples/py-pydantic-ai) | Pydantic AI + `OpenBoxRestateAgent` | `docker compose -f examples/py-pydantic-ai/docker-compose.yml up` |
+| [`examples/py-langchain`](examples/py-langchain) | LangChain + `OpenBoxRestateMiddleware` | `docker compose -f examples/py-langchain/docker-compose.yml up` |
 | [`examples/py-openai-agents`](examples/py-openai-agents) | OpenAI Agents SDK + `govern_agent` | `docker compose -f examples/py-openai-agents/docker-compose.yml up` |
 
 The multi-agent example also needs the child agent's credentials in `.env`: `CHILD_OPENBOX_API_KEY`, `CHILD_OPENBOX_AGENT_DID` and `CHILD_OPENBOX_AGENT_PRIVATE_KEY`.

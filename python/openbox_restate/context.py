@@ -47,9 +47,13 @@ class GovernanceContext:
     name_counters: dict[str, int] = field(default_factory=dict)
     used_activity_ids: set[str] = field(default_factory=set)
     vobj_warning_logged: bool = False
-    #: The llm_call activity whose model request is in flight (a SpanScopeInfo), set by framework hooks that
-    #: cannot wrap the call itself (OpenAI Agents SDK). Span capture falls back to it outside governed tools.
-    llm_scope: Any = None
+    #: The activity (a SpanScopeInfo) whose call is in flight, set by framework callbacks that cannot wrap the
+    #: call itself (OpenAI Agents SDK model calls, Google ADK tools). Span capture falls back to it.
+    active_scope: Any = None
+    #: Calls governed across two framework callbacks (pre in one, post in another), by tool-call id.
+    pending_calls: dict[str, Any] = field(default_factory=dict)
+    #: Serializes governed tool calls of one invocation in call order (frameworks that run them concurrently).
+    tool_lock: Any = None
 
 
 _current: contextvars.ContextVar[GovernanceContext | None] = contextvars.ContextVar(

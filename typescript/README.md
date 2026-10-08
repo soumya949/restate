@@ -50,7 +50,7 @@ Credentials come from the environment: `OPENBOX_API_URL`, `OPENBOX_API_KEY`, and
 | `governedRun(ctx, name, op, fn)` / `governedCall(ctx, call, fn)` | Govern one side-effecting step. |
 | `governedParallel(ctx, calls)` | Pre-checks in call order, tools concurrently, post-checks in call order. |
 | `governedSubAgent(ctx, call, invoke)`, `childHeaders(ctx)` | Call another governed agent in the same Multi-Agent Session. |
-| `governedLlmCall(ctx, info, call, describe)`, `reportLlmCall(ctx, report)`, `./vercel-ai` → `openboxLlmTelemetry(ctx)` | Report model calls (model, tokens) for Model Usage. Telemetry only. |
+| `governedLlmCall(ctx, info, call, describe)`, `reportLlmCall(ctx, report)`, `./vercel-ai` → `openboxLlmTelemetry(ctx)` | Govern model calls as `llm_call` activities (model, tokens): input guardrails redact the prompt before the provider sees it; HALT / BLOCK / approval are enforced. `call` receives the approved prompt. `reportLlmCall` is telemetry only. |
 | `openboxAuditHook()` | Optional Restate hook. Reports `ctx.run` calls made outside governed tools, audit only. |
 | `@openbox-ai/openbox-restate-sdk/vercel-ai` → `governTools(ctx, tools)` | Govern Vercel AI SDK tools (`ai` v6 or v7). |
 | `@openbox-ai/openbox-restate-sdk/instrumentation` → `enableOpenBoxSpans()` | Report each tool's HTTP, file and DB calls as spans (patches globals; opt in). |

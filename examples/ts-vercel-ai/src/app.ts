@@ -5,7 +5,8 @@
  *   1. the handler is wrapped with `openboxHandler`
  *   2. the tools passed to `generateText` go through `governTools(ctx, ...)`
  *   3. `enableOpenBoxSpans()` reports the HTTP calls each tool makes as spans
- *   4. `openboxLlmTelemetry(ctx)` reports each LLM call (model, tokens) for Model Usage
+ *   4. `openboxLlmTelemetry(ctx)` governs each LLM call: input guardrails redact the prompt before
+ *      the provider sees it; model and tokens are reported
  */
 import { existsSync } from "node:fs";
 

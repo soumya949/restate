@@ -149,8 +149,8 @@ class _RestateContextStore(ContextStore):
         if bound is not None:
             return bound
         g = current_governance_context()
-        if g is not None and g.rt is self._rt and g.llm_scope is not None:
-            return _activity(g.llm_scope)
+        if g is not None and g.rt is self._rt and g.active_scope is not None:
+            return _activity(g.active_scope)
         return None
 
 

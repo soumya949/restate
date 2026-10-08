@@ -8,6 +8,7 @@ Every side-effecting step of your agent is checked against OpenBox policy **befo
 pip install openbox-restate-sdk                 # core
 pip install "openbox-restate-sdk[openai]"       # + OpenAI Agents SDK integration
 pip install "openbox-restate-sdk[spans]"        # + HTTP span capture
+pip install "openbox-restate-sdk[adk]"          # + Google ADK          (also [pydantic-ai], [langchain])
 ```
 
 Requires Python ≥ 3.11 and `restate-sdk` ≥ 1.0.5.
@@ -55,7 +56,10 @@ async def run(_ctx: restate.Context, req: Prompt) -> str:
 | `governed_parallel` (`openbox_restate.governed_run`) | Pre-checks in call order, tools concurrently, post-checks in call order |
 | `governed_sub_agent`, `child_headers` (`openbox_restate.multi_agent`) | Call another governed agent in the same Multi-Agent Session |
 | `govern_agent`, `govern_tool`, `governed_function_tool` (`openbox_restate.openai`) | OpenAI Agents SDK |
-| `governed_llm_call` / `report_llm_call` (`openbox_restate.llm`) | Report a model call (model, tokens) for Model Usage. `govern_agent` does it for you |
+| `OpenBoxRestatePlugin` (`openbox_restate.adk`) | Google ADK: drop-in for Restate's `RestatePlugin` |
+| `OpenBoxRestateAgent` (`openbox_restate.pydantic_ai`) | Pydantic AI: drop-in for Restate's `RestateAgent` |
+| `OpenBoxRestateMiddleware` (`openbox_restate.langchain`) | LangChain `create_agent`: drop-in for Restate's `RestateMiddleware` |
+| `governed_llm_call` / `report_llm_call` (`openbox_restate.llm`) | Govern a model call as an `llm_call` activity (model, tokens): input guardrails redact the prompt, HALT / BLOCK / approval are enforced, and `call` receives the approved prompt. The framework integrations do it for you. `report_llm_call` is telemetry only |
 | `enable_openbox_spans()` (`openbox_restate.instrumentation`) | Report each tool's httpx, requests, urllib3, urllib, DB and file calls as spans |
 
 Configuration and verdict behaviour are the same as the TypeScript package; see its README. The environment variables are `OPENBOX_API_URL`, `OPENBOX_API_KEY`, `OPENBOX_AGENT_DID`, `OPENBOX_AGENT_PRIVATE_KEY` and the `OPENBOX_RESTATE_*` overrides.

@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from .conftest import requires_restate
-from .p2_app import PARENT_DID, agent_core, child_core, parent_core, ran
+from .p2_app import PARENT_DID, agent_core, child_core, parent_core, ran, seen_prompts
 
 pytestmark = requires_restate
 
@@ -15,6 +15,12 @@ async def ok(call: Any, handler: str, body: Any = None) -> Any:
     r = await call(handler, body)
     assert r.status_code == 200, r.text
     return r.json()
+
+
+GUARDRAIL_FAILED = {
+    "verdict": "allow",
+    "guardrails_result": {"validation_passed": False, "reasons": [{"reason": "toxic"}]},
+}
 
 
 # ── OpenAI Agents SDK ────────────────────────────────────────────────────────
@@ -64,6 +70,42 @@ async def test_halt_ends_the_invocation_not_retried_by_the_agents_sdk(call: Any)
     assert len(agent_core.evaluations("ActivityStarted", "wire_money")) == 1
     # Core already closed the session on HALT: nothing is sent after it.
     assert agent_core.evaluations("WorkflowFailed") == []
+
+
+async def test_llm_input_guardrail_redacts_the_prompt_the_model_receives(call: Any) -> None:
+    agent_core.rule(
+        lambda b: {
+            "verdict": "allow",
+            "guardrails_result": {
+                "validation_passed": True,
+                "input_type": "activity_input",
+                "redacted_input": [{"prompt": "weather for <EMAIL_ADDRESS>"}],
+                "reasons": [{"reason": "The following text contains PII"}],
+            },
+        }
+        if b.get("activity_type") == "llm_call" and b.get("event_type") == "ActivityStarted"
+        else None
+    )
+    out = await ok(call, "oai/run", "weather for bob@example.com")
+    assert "Paris" in out
+    assert seen_prompts and all(p == "weather for <EMAIL_ADDRESS>" for p in seen_prompts)
+
+
+async def test_failed_llm_guardrail_refuses_the_model_call(call: Any) -> None:
+    agent_core.on_activity("llm_call", "ActivityStarted", GUARDRAIL_FAILED)
+    r = await call("oai/run", "weather")
+    assert r.status_code == 422, r.text
+    assert "guardrails failed: toxic" in r.text
+    assert seen_prompts == [] and ran == []
+
+
+async def test_halt_on_llm_call_stops_before_the_model(call: Any) -> None:
+    agent_core.on_activity("llm_call", "ActivityStarted", {"verdict": "halt", "reason": "model use suspended"})
+    r = await call("oai/run", "weather")
+    assert r.status_code == 403, r.text
+    assert "OpenBox HALT: model use suspended" in r.text
+    assert seen_prompts == [] and ran == []
+    assert len(agent_core.evaluations("ActivityStarted", "llm_call")) == 1
 
 
 async def test_durable_approval_inside_an_agents_sdk_tool(call: Any) -> None:

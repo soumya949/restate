@@ -1,0 +1,19 @@
+[project]
+name = "openbox-restate-example-py-pydantic-ai"
+version = "0.1.0"
+description = "Restate + Pydantic AI agent governed by OpenBox"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx",
+    "hypercorn",
+    "restate-sdk[serde]>=1.0.5",
+    "pydantic>=2.11.9",
+    "pydantic-ai-slim[openai,mcp]>=2.0,<3",
+    "openbox-restate-sdk[pydantic-ai,spans]",
+]
+
+[tool.uv.sources]
+openbox-restate-sdk = { path = "../../python", editable = true }
+
+[tool.uv]
+package = false

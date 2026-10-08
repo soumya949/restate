@@ -75,14 +75,21 @@ async def restate_ingress() -> AsyncIterator[str]:
 @pytest_asyncio.fixture
 async def call(restate_ingress: str) -> Any:
     from .app import api_hits, core, counters
-    from .p2_app import agent_core, child_core, parent_core, ran
+    from .p2_app import agent_core, child_core, parent_core, ran, seen_prompts
 
     core.reset()
     counters["tool"] = 0
     api_hits["n"] = 0
-    for c in (agent_core, parent_core, child_core):
+    from .p4_app import CORES
+    from .p4_app import ran as p4_ran
+    from .p4_app import seen_prompts as p4_seen
+
+    for c in (agent_core, parent_core, child_core, *CORES.values()):
         c.reset()
     ran.clear()
+    p4_ran.clear()
+    seen_prompts.clear()
+    p4_seen.clear()
     async with httpx.AsyncClient(timeout=60) as http:
 
         async def _call(handler: str, body: Any = None) -> httpx.Response:

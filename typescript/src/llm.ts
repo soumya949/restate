@@ -6,12 +6,11 @@
  * ActivityCompleted whose output is `{ llm_model, input_tokens, output_tokens,
  * total_tokens, completion, has_tool_calls }`.
  *
- * Telemetry only: the verdict is not enforced and a reporting failure never
- * fails the agent. Both events go in ONE journaled step, so a replay never
- * reports the same call twice.
+ * `governedLlmCall` / the framework integrations ENFORCE the verdict like a tool's (redaction,
+ * BLOCK, HALT, approval). `reportLlmCall` is telemetry only (after the fact, one step).
  *
  * Two ways to report:
- *  - `governedLlmCall(ctx, info, call, describe)` (preferred): ActivityStarted is sent BEFORE the
+ *  - `governedLlmCall(ctx, info, call, describe)` (preferred): governed BEFORE the
  *    call and the call runs inside the activity's span scope, so with `enableOpenBoxSpans()` the
  *    model provider's HTTP request appears as a span of the `llm_call` (OpenBox counts LLM calls
  *    from it). The Vercel AI SDK middleware `openboxLlmTelemetry` uses this.
@@ -20,8 +19,12 @@
 
 import * as restate from "@restatedev/restate-sdk";
 
+import { waitForApproval } from "./approvals.js";
 import { requireGovernanceContext, type GovernanceContext } from "./context.js";
+import { decide, detailsOf, redacted } from "./enforce.js";
+import { GovernanceBlockedError, GovernanceHaltError } from "./errors.js";
 import { activityCompletedEvent, activityStartedEvent, errorInfoOf, toJson } from "./events.js";
+import { haltedError, recordHalt } from "./governed-run.js";
 import { activityIdFor, stepNames } from "./ids.js";
 import { bestEffort, evaluateStep } from "./steps.js";
 
@@ -118,42 +121,65 @@ function inLlmScope<T>(g: GovernanceContext, id: string, fn: () => Promise<T>): 
   );
 }
 
+/** The approved state of one llm_call: its activity, when it started, and the prompt the model may see. */
+export interface LlmPre {
+  id: string;
+  startedAt: number | null;
+  /** The prompt after input guardrails (redacted when a guardrail transformed it). */
+  prompt: string | null;
+  /** Whether a guardrail changed the prompt. */
+  redacted: boolean;
+}
+
 /**
- * Report an LLM call as an `llm_call` activity around the call itself (telemetry only: verdicts
- * are not enforced, reporting failures never fail the agent):
- *
- * ```ts
- * const res = await governedLlmCall(ctx, { prompt: message },
- *   () => ctx.run("LLM call", () => callLLM(messages)),
- *   (r) => ({ model: r.model, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens, completion: r.text }));
- * ```
- *
- * `call` must journal the model call itself (`ctx.run`, or `durableCalls`): on replay its result
- * comes from the journal, no HTTP request is made, and neither event is re-sent.
+ * PRE for an LLM call (journaled), enforced like a tool's: HALT ends the session, BLOCK or a failed
+ * guardrail refuses the call (terminal), REQUIRE_APPROVAL waits durably, and an input guardrail's
+ * redaction replaces the prompt the model will receive.
  */
-export async function governedLlmCall<T>(
+export async function llmPrePhase(ctx: restate.Context, info: { prompt?: string | null; model?: string | null }): Promise<LlmPre> {
+  const g = requireGovernanceContext(ctx);
+  if (g.halted) throw haltedError(g);
+  const id = activityIdFor(g, LLM_ACTIVITY_TYPE);
+  const pre = stepNames.llmPre(id);
+  const original = info.prompt ?? null;
+  const rec = await evaluateStep(ctx, g, pre, () => [
+    activityStartedEvent(g, pre, {
+      activityId: id,
+      activityType: LLM_ACTIVITY_TYPE,
+      input: { prompt: original },
+      semanticType: "LLM_CALL"
+    })
+  ]);
+  const d = decide(rec, g.rt.config.restate.hitlEnabled);
+  let approvalAt: number | null = null;
+  switch (d.kind) {
+    case "halt":
+      throw recordHalt(g, new GovernanceHaltError(d.reason, detailsOf(rec)));
+    case "blocked":
+      throw new GovernanceBlockedError(d.reason, detailsOf(rec));
+    case "approval":
+      approvalAt = (await waitForApproval(ctx, g, id, rec))?.at ?? null;
+      break;
+    case "proceed":
+      break;
+  }
+  const after = redacted(rec, { prompt: original } as { prompt: unknown }, "input");
+  const prompt = typeof after?.prompt === "string" ? after.prompt : original;
+  return { id, startedAt: approvalAt ?? rec.at ?? null, prompt, redacted: prompt !== original };
+}
+
+/** EXECUTE + POST for an LLM call whose PRE already ran: the call runs in the llm_call span scope. */
+export async function llmRun<T>(
   ctx: restate.Context,
-  info: { prompt?: string | null; model?: string | null },
+  pre: LlmPre,
+  model: string | null,
   call: () => Promise<T>,
   describe: (result: T) => LlmCallResult
 ): Promise<T> {
   const g = requireGovernanceContext(ctx);
-  const id = activityIdFor(g, LLM_ACTIVITY_TYPE);
-  const pre = stepNames.llmPre(id);
+  const { id } = pre;
   const post = stepNames.llmPost(id);
-  let startedAt: number | null = null;
-  await bestEffort(g, `LLM call ${id}`, async () => {
-    const rec = await evaluateStep(ctx, g, pre, () => [
-      activityStartedEvent(g, pre, {
-        activityId: id,
-        activityType: LLM_ACTIVITY_TYPE,
-        input: { prompt: info.prompt ?? null },
-        semanticType: "LLM_CALL"
-      })
-    ]);
-    startedAt = rec.at ?? null;
-  });
-  const duration = (now: number) => (startedAt !== null ? now - startedAt : undefined);
+  const duration = (now: number) => (pre.startedAt !== null ? now - pre.startedAt : undefined);
 
   // Counted as a governed execution so the audit hook does not report the same call again.
   g.activeTools++;
@@ -171,7 +197,7 @@ export async function governedLlmCall<T>(
             status: "failed",
             error: errorInfoOf(err),
             durationMs: duration(now),
-            result: toJson(outputOf({ model: info.model ?? null }))
+            result: toJson(outputOf({ model }))
           })
         ])
       );
@@ -192,10 +218,36 @@ export async function governedLlmCall<T>(
         activityId: id,
         activityType: LLM_ACTIVITY_TYPE,
         status: "completed",
-        result: toJson(outputOf({ model: info.model ?? null, ...described })),
+        result: toJson(outputOf({ model, ...described })),
         durationMs: duration(now)
       })
     ])
   );
   return result;
+}
+
+/**
+ * Govern an LLM call as an `llm_call` activity around the call itself:
+ *
+ * ```ts
+ * const res = await governedLlmCall(ctx, { prompt: message },
+ *   ({ prompt }) => ctx.run("LLM call", () => callLLM(withUserPrompt(messages, prompt))),
+ *   (r) => ({ model: r.model, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens, completion: r.text }));
+ * ```
+ *
+ * `call` receives the prompt OpenBox approved: build the model request from it, so input
+ * guardrails (e.g. PII redaction) apply before the provider sees the data. HALT / BLOCK / a failed
+ * guardrail refuse the call; REQUIRE_APPROVAL waits durably.
+ *
+ * `call` must journal the model call itself (`ctx.run`, or `durableCalls`): on replay its result
+ * comes from the journal, no HTTP request is made, and neither event is re-sent.
+ */
+export async function governedLlmCall<T>(
+  ctx: restate.Context,
+  info: { prompt?: string | null; model?: string | null },
+  call: (approved: { prompt: string | null }) => Promise<T>,
+  describe: (result: T) => LlmCallResult
+): Promise<T> {
+  const pre = await llmPrePhase(ctx, info);
+  return llmRun(ctx, pre, info.model ?? null, () => call({ prompt: pre.prompt }), describe);
 }
