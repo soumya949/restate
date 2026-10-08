@@ -8,7 +8,8 @@
  *      for human approval → run → report), and a blocked call is fed back to
  *      the LLM as the tool result instead of crashing the agent.
  *   3. `enableOpenBoxSpans()` reports the HTTP calls each tool makes as spans
- *   4. `governedLlmCall` reports each LLM call (model, tokens, and its HTTP request as a span)
+ *   4. `governedLlmCall` governs each LLM call: input guardrails redact the prompt before the
+ *      provider sees it, and the call is reported (model, tokens, HTTP request as a span)
  *      of that tool's activity (each span also gets a verdict).
  */
 import { existsSync } from "node:fs";
@@ -83,6 +84,13 @@ async function fetchWeather(city: string) {
 }
 
 // <start_here>
+/** The conversation with the latest user turn replaced by the prompt OpenBox approved. */
+function withUserPrompt(messages: ModelMessage[], prompt: string | null): ModelMessage[] {
+  if (prompt === null) return messages;
+  const i = messages.map((m) => m.role).lastIndexOf("user");
+  return i < 0 ? messages : messages.map((m, j) => (j === i ? { role: "user", content: prompt } : m));
+}
+
 // AGENT
 const run = openboxHandler( // OPENBOX
   async (ctx: restate.Context, { message }: { message: string }) => {
@@ -95,7 +103,9 @@ const run = openboxHandler( // OPENBOX
       const result = await governedLlmCall( // OPENBOX
         ctx,
         { prompt: message },
-        () => ctx.run("LLM call", async () => await callLLM(messages, tools), { maxRetryAttempts: 3 }),
+        // The model gets the prompt OpenBox approved (input guardrails may have redacted it).
+        ({ prompt }) =>
+          ctx.run("LLM call", async () => await callLLM(withUserPrompt(messages, prompt), tools), { maxRetryAttempts: 3 }),
         (r) => ({
           model: r.model,
           completion: r.text || null,

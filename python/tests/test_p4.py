@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from .conftest import requires_restate
-from .p4_app import CORES, ran
+from .p4_app import CORES, ran, seen_prompts
 
 pytestmark = requires_restate
 
@@ -92,3 +92,63 @@ async def test_rejected_approval_is_terminal_not_retried(call: Any, fw: str, han
         assert "approval rejected" in r.text
     assert ran == []
     assert len(core.evaluations("ActivityStarted", "send_email")) == 1
+
+
+GUARDRAIL_FAILED = {
+    "verdict": "allow",
+    "guardrails_result": {"validation_passed": False, "reasons": [{"reason": "toxic"}]},
+}
+
+
+# ── LLM input guardrails (enforced on llm_call like on a tool) ──
+
+PII = "weather for bob@example.com"
+
+
+def _redact_llm_prompt(core: Any) -> None:
+    """The live PII guardrail's answer: allow, with the prompt redacted (activity_input)."""
+    core.rule(
+        lambda b: {
+            "verdict": "allow",
+            "guardrails_result": {
+                "validation_passed": True,
+                "input_type": "activity_input",
+                "redacted_input": [{"prompt": "weather for <EMAIL_ADDRESS>"}],
+                "reasons": [{"reason": "The following text contains PII"}],
+            },
+        }
+        if b.get("activity_type") == "llm_call" and b.get("event_type") == "ActivityStarted"
+        else None
+    )
+
+
+@pytest.mark.parametrize(("fw", "handler"), FRAMEWORKS)
+async def test_llm_input_guardrail_redacts_the_prompt_the_model_receives(call: Any, fw: str, handler: str) -> None:
+    core = CORES[fw]
+    _redact_llm_prompt(core)
+    out = await ok(call, handler, PII)
+    assert "Paris" in out
+    assert seen_prompts and all(p == "weather for <EMAIL_ADDRESS>" for p in seen_prompts)
+    assert ran == ["weather:Paris"]
+
+
+@pytest.mark.parametrize(("fw", "handler"), FRAMEWORKS)
+async def test_failed_llm_guardrail_refuses_the_model_call(call: Any, fw: str, handler: str) -> None:
+    core = CORES[fw]
+    core.on_activity("llm_call", "ActivityStarted", GUARDRAIL_FAILED)
+    r = await call(handler, "weather")
+    assert r.status_code == 422, r.text
+    assert "guardrails failed: toxic" in r.text
+    assert seen_prompts == [] and ran == []
+
+
+@pytest.mark.parametrize(("fw", "handler"), FRAMEWORKS)
+async def test_halt_on_llm_call_stops_before_the_model(call: Any, fw: str, handler: str) -> None:
+    core = CORES[fw]
+    core.on_activity("llm_call", "ActivityStarted", {"verdict": "halt", "reason": "model use suspended"})
+    r = await call(handler, "weather")
+    assert r.status_code == 403, r.text
+    assert "OpenBox HALT: model use suspended" in r.text
+    assert seen_prompts == [] and ran == []
+    assert len(core.evaluations("ActivityStarted", "llm_call")) == 1
+    assert core.evaluations("WorkflowFailed") == []

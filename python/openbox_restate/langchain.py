@@ -14,7 +14,8 @@ tools), plus:
   ``ToolMessage`` ``"Blocked by policy: …"``; HALT ends the invocation; REQUIRE_APPROVAL waits
   durably. The tool's HTTP/DB/file calls are spans of its activity.
 * **LLM calls.** Each model call is an ``llm_call`` activity (model, tokens) and the provider
-  request is its span.
+  request is its span. Enforced like a tool: input guardrails redact the prompt the model gets,
+  HALT / BLOCK / a failed guardrail refuse the call, REQUIRE_APPROVAL waits durably.
 
 Needs ``openbox-restate-sdk[langchain]``.
 """
@@ -50,6 +51,20 @@ def _text(content: Any) -> str | None:
     return None
 
 
+def _with_human_text(messages: list[Any], text: str) -> list[Any]:
+    """A copy of ``messages`` with the latest human message's text replaced (non-text parts kept)."""
+    out = list(messages)
+    for i in range(len(out) - 1, -1, -1):
+        m = out[i]
+        if isinstance(m, HumanMessage):
+            parts = m.content if isinstance(m.content, list) else []
+            others = [p for p in parts if not (isinstance(p, dict) and p.get("type") == "text")]
+            content: Any = [{"type": "text", "text": text}, *others] if others else text
+            out[i] = m.model_copy(update={"content": content})
+            return out
+    return out
+
+
 def _describe(response: ModelResponse) -> dict[str, Any]:
     ai = next((m for m in response.result if isinstance(m, AIMessage)), None)
     if ai is None:
@@ -82,9 +97,16 @@ class OpenBoxRestateMiddleware(RestateMiddleware):
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         prompt = next((_text(m.content) for m in reversed(request.messages) if isinstance(m, HumanMessage)), None)
+
+        async def call(approved: str | None) -> ModelResponse:
+            req = request
+            if approved is not None and approved != prompt:  # input guardrails redacted the prompt
+                req = request.override(messages=_with_human_text(request.messages, approved))
+            return await super(OpenBoxRestateMiddleware, self).awrap_model_call(req, handler)
+
         return await governed_llm_call(
             restate_context(),
-            lambda: super(OpenBoxRestateMiddleware, self).awrap_model_call(request, handler),
+            call,
             _describe,
             prompt=prompt,
             model=getattr(request.model, "model_name", None) or getattr(request.model, "model", None),

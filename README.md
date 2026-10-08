@@ -108,13 +108,20 @@ Add `@openbox_handler` to the handler as usual. In all three, a BLOCK goes back 
 
 ## LLM calls (Model Usage, Cost, "LLM Calls")
 
-Each model call can be reported as an `llm_call` activity carrying the model, the token counts and the completion. This is telemetry only: it is never enforced, and it is sent in one journaled step, so a replay never double-counts it.
+Each model call is governed as an `llm_call` activity carrying the prompt, the model, the token counts and the completion. Both checks are journaled, so a replay never sends them twice. The verdict is enforced like a tool's:
+
+- **Input guardrails** (for example PII redaction) rewrite the latest user prompt **before** the model provider sees it.
+- **HALT** ends the invocation, and **BLOCK** or a failed guardrail refuses the call. Both are terminal, and the model is never called.
+- **REQUIRE_APPROVAL** waits durably for a reviewer, then the call runs.
+
+Guardrails check the latest user prompt. Earlier turns of a conversation are sent as they are in your history.
 
 | Where | How |
 |---|---|
 | Vercel AI SDK | `wrapLanguageModel({ model, middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx)] })`. Put it before `durableCalls`. |
 | OpenAI Agents SDK | Automatic: `govern_agent` adds agent hooks, chained with any hooks you already have |
-| Raw loops | Wrap the journaled LLM call: `governedLlmCall(ctx, { prompt }, () => ctx.run(...), describe)` / `governed_llm_call(ctx, call, describe, prompt=...)`. (`reportLlmCall` / `report_llm_call` reports after the fact, without spans.) |
+| Google ADK, Pydantic AI, LangChain | Automatic: the OpenBox drop-in classes |
+| Raw loops | Wrap the journaled LLM call: `governedLlmCall(ctx, { prompt }, ({ prompt }) => ctx.run(...), describe)` / `governed_llm_call(ctx, lambda approved: ctx.run_typed(...), describe, prompt=...)`. `call` receives the **approved** prompt: build the model request from it. (`reportLlmCall` / `report_llm_call` reports after the fact, without spans, and is telemetry only.) |
 
 With span capture on, the model provider's HTTP request appears as a span of its `llm_call`. The `llm_call` is started before the request, the same way as a governed tool.
 

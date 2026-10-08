@@ -23,7 +23,11 @@ SCRIPTS: dict[str, tuple[str, str, dict[str, Any]]] = {
     "delete": ("call_d1", "delete_records", {"table": "users"}),
     "wire": ("call_x1", "wire_money", {"account": "A1", "amount": 5}),
     "email": ("call_e1", "send_email", {"to": "bob@example.com"}),
+    # What an input guardrail (PII redaction) turns "weather for bob@example.com" into.
+    "weather for <EMAIL_ADDRESS>": ("call_r1", "get_weather", {"city": "Paris"}),
 }
+#: The user prompt each model call received.
+seen_prompts: list[str] = []
 
 
 def _rt(core: FakeCore, key: str) -> OpenBoxRestate:
@@ -106,6 +110,7 @@ class FakeAdkModel(BaseLlm):
             yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text=text)]), usage_metadata=usage)
             return
         prompt = next(p.text for p in parts if p.text)
+        seen_prompts.append(prompt)
         cid, name, args = SCRIPTS[prompt]
         call = types.Part(function_call=types.FunctionCall(id=cid, name=name, args=args))
         yield LlmResponse(content=types.Content(role="model", parts=[call]), usage_metadata=usage)
@@ -163,6 +168,7 @@ def _pyd_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         text = "done: " + " | ".join(str(r.content) for r in returns)
         return ModelResponse(parts=[TextPart(text)], usage=usage, model_name="fake-pydantic")
     prompt = next(str(p.content) for p in parts if isinstance(p, UserPromptPart))
+    seen_prompts.append(prompt)
     cid, name, args = SCRIPTS[prompt]
     return ModelResponse(
         parts=[ToolCallPart(tool_name=name, args=args, tool_call_id=cid)], usage=usage, model_name="fake-pydantic"
@@ -213,6 +219,7 @@ class FakeLcModel(BaseChatModel):
             msg = AIMessage(content=text, usage_metadata=usage, response_metadata=meta)  # type: ignore[arg-type]
         else:
             prompt = next(str(m.content) for m in messages if isinstance(m, HumanMessage))
+            seen_prompts.append(prompt)
             cid, name, args = SCRIPTS[prompt]
             msg = AIMessage(
                 content="",

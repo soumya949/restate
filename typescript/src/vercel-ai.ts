@@ -26,7 +26,7 @@ import type { LanguageModelMiddleware, ToolExecutionOptions, ToolSet } from "ai"
 import { getGovernanceContext } from "./context.js";
 import { OpenBoxContractError } from "./errors.js";
 import { governedRun, haltedError, type GovernedRunOptions } from "./governed-run.js";
-import { governedLlmCall } from "./llm.js";
+import { llmPrePhase, llmRun, type LlmPre } from "./llm.js";
 
 
 export interface GovernToolsOptions {
@@ -130,28 +130,49 @@ function latestUserText(prompt: ReadonlyArray<{ role: string; content: unknown }
   return null;
 }
 
+/** Replace the text of the latest user turn with `text` (other parts, e.g. files, are kept). */
+function withLatestUserText<P extends ReadonlyArray<{ role: string; content: unknown }>>(prompt: P, text: string): P {
+  const i = [...prompt].map((m) => m.role).lastIndexOf("user");
+  if (i < 0) return prompt;
+  const m = prompt[i]!;
+  const others = Array.isArray(m.content) ? m.content.filter((c: { type?: string }) => c.type !== "text") : [];
+  const copy = [...prompt];
+  copy[i] = { ...m, content: [{ type: "text", text }, ...others] };
+  return copy as unknown as P;
+}
+
 /**
- * Report every model call to OpenBox as an `llm_call` activity (model, tokens,
- * completion): feeds Model Usage, Cost and "LLM Calls". Telemetry only.
+ * Govern every model call as an `llm_call` activity (model, tokens, completion; with spans the
+ * provider request is its span). Enforced like a tool call:
+ *  - input guardrails (e.g. PII redaction) rewrite the user prompt BEFORE the provider sees it;
+ *  - HALT / BLOCK / a failed guardrail refuse the call; REQUIRE_APPROVAL waits durably.
  *
- * Put it BEFORE `durableCalls` so it wraps the journaled call (on replay the
- * response comes from the journal and the report step is not re-sent):
+ * Put it BEFORE `durableCalls`: its `transformParams` runs first, so the redacted request is the
+ * one journaled and sent, and on replay neither the request nor any event is repeated.
  *
  * ```ts
  * wrapLanguageModel({ model, middleware: [openboxLlmTelemetry(ctx), durableCalls(ctx)] })
  * ```
  */
 export function openboxLlmTelemetry(ctx: restate.Context): LanguageModelMiddleware {
+  // transformParams (PRE) and wrapGenerate (EXECUTE + POST) of the same call, in order.
+  const pending: LlmPre[] = [];
   return {
-    wrapGenerate: async ({ doGenerate, params, model }) => {
+    transformParams: async ({ params, model }) => {
       // After a HALT the AI SDK would still call the model again (it turns the tool's error into a
       // tool result). The session is over: stop before spending an ungoverned LLM call.
       const g = getGovernanceContext(ctx);
       if (g?.halted) throw haltedError(g);
       const prompt = latestUserText(params.prompt as ReadonlyArray<{ role: string; content: unknown }>);
-      // The model's HTTP request runs inside the llm_call activity: with spans enabled, the POST to the
-      // provider appears as its span. doGenerate is journaled by durableCalls (inside this middleware).
-      return governedLlmCall(ctx, { prompt, model: model.modelId }, async () => await doGenerate(), (result) => {
+      const pre = await llmPrePhase(ctx, { prompt, model: model.modelId });
+      pending.push(pre);
+      if (!pre.redacted || pre.prompt === null) return params;
+      return { ...params, prompt: withLatestUserText(params.prompt, pre.prompt) };
+    },
+    wrapGenerate: async ({ doGenerate, model }) => {
+      const pre = pending.shift();
+      if (!pre) return doGenerate(); // not called through transformParams (should not happen)
+      return llmRun(ctx, pre, model.modelId, async () => await doGenerate(), (result) => {
         const content = result.content as ReadonlyArray<{ type: string; text?: string }>;
         const completion = content
           .filter((c) => c.type === "text" && typeof c.text === "string")

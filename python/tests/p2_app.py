@@ -66,7 +66,11 @@ SCRIPTS: dict[str, list[tuple[str, str, str]]] = {
     "email": [("call_e1", "send_email", '{"to": "bob@example.com"}')],
     "both": [("call_b1", "get_weather", '{"city": "Rome"}'), ("call_b2", "get_weather", '{"city": "Oslo"}')],
     "span-weather": [("call_s1", "get_weather", '{"city": "Lima"}')],
+    # What an input guardrail (PII redaction) turns "weather for bob@example.com" into.
+    "weather for <EMAIL_ADDRESS>": [("call_r1", "get_weather", '{"city": "Paris"}')],
 }
+#: The user prompt each model call received.
+seen_prompts: list[str] = []
 
 #: Set by tests/app.py: the downstream API port used as a stand-in model provider.
 PROVIDER_PORT: list[int] = []
@@ -92,6 +96,7 @@ class FakeModel(Model):
             msg = ResponseOutputMessage(id="m1", type="message", role="assistant", status="completed", content=[text])
             return ModelResponse(output=[msg], usage=_usage(), response_id=None)
         prompt = next(str(i.get("content")) for i in items if isinstance(i, dict) and i.get("role") == "user")
+        seen_prompts.append(prompt)
         calls = [
             ResponseFunctionToolCall(type="function_call", call_id=cid, name=name, arguments=args, id=f"fc_{cid}")
             for cid, name, args in SCRIPTS[prompt]

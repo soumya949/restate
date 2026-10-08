@@ -30,6 +30,8 @@ const rt = new OpenBoxRestate({
 });
 
 const ran: string[] = [];
+/** Every user prompt text the model actually received (what the provider would see). */
+const seenPrompts: string[] = [];
 type Call = { id: string; name: string; input: Record<string, unknown> };
 
 /** A model that asks for `calls` on its first step and answers with text once it has tool results. */
@@ -40,6 +42,8 @@ function mockModel(calls: Call[]) {
   };
   return new MockLanguageModelV4({
     doGenerate: async (options) => {
+      for (const m of options.prompt)
+        if (m.role === "user") for (const c of m.content) if (c.type === "text") seenPrompts.push(c.text);
       const toolResults = options.prompt.filter((m) => m.role === "tool").flatMap((m) => m.content);
       if (toolResults.length === 0) {
         return {
@@ -124,6 +128,7 @@ afterAll(async () => env?.stop());
 beforeEach(() => {
   core.reset();
   ran.length = 0;
+  seenPrompts.length = 0;
   warnings.length = 0;
 });
 
@@ -159,6 +164,44 @@ describe("governTools (Vercel AI SDK)", () => {
       has_tool_calls: true
     });
     expect(completed[1]!.body["activity_output"]).toMatchObject({ has_tool_calls: false, completion: expect.stringContaining("Paris") });
+  });
+
+  it("an input guardrail's redaction reaches the model, not the original prompt", async () => {
+    // Shape OpenBox returned live for a PII guardrail with "Block on violation" off.
+    core.rule((b) =>
+      b["activity_type"] === "llm_call" && b["event_type"] === "ActivityStarted"
+        ? {
+            verdict: "allow",
+            guardrails_result: {
+              validation_passed: true,
+              input_type: "activity_input",
+              redacted_input: [{ prompt: "run weather for <EMAIL_ADDRESS>" }],
+              reasons: [{ reason: "The following text contains PII" }]
+            }
+          }
+        : undefined
+    );
+    await run("weather");
+    expect(seenPrompts.length).toBeGreaterThan(0);
+    expect(seenPrompts.every((t) => t === "run weather for <EMAIL_ADDRESS>")).toBe(true);
+    expect(seenPrompts.some((t) => t === "run weather")).toBe(false);
+  });
+
+  it("a failed LLM guardrail refuses the model call (terminal)", async () => {
+    core.rule((b) =>
+      b["activity_type"] === "llm_call" && b["event_type"] === "ActivityStarted"
+        ? { verdict: "allow", guardrails_result: { validation_passed: false, reasons: [{ reason: "toxic" }] } }
+        : undefined
+    );
+    await expect(run("weather")).rejects.toThrow(/guardrails failed: toxic/);
+    expect(seenPrompts).toEqual([]);
+    expect(ran).toEqual([]);
+  });
+
+  it("HALT on an LLM call ends the run before the model is called", async () => {
+    core.onActivity("llm_call", "ActivityStarted", { verdict: "halt", reason: "model use suspended" });
+    await expect(run("weather")).rejects.toThrow(/OpenBox HALT: model use suspended/);
+    expect(seenPrompts).toEqual([]);
   });
 
   it("BLOCK goes back to the model as the tool result; the tool never runs", async () => {

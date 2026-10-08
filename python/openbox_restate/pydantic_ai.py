@@ -21,6 +21,7 @@ Needs ``openbox-restate-sdk[pydantic-ai]``.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from typing import Any
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
@@ -95,6 +96,23 @@ def _latest_prompt(messages: list[ModelMessage]) -> str | None:
     return None
 
 
+def _with_prompt(messages: list[ModelMessage], prompt: str) -> list[ModelMessage]:
+    """A copy of ``messages`` with the latest text user prompt replaced (the history is not changed)."""
+    out = list(messages)
+    for i in range(len(out) - 1, -1, -1):
+        m = out[i]
+        if not isinstance(m, ModelRequest):
+            continue
+        for j in range(len(m.parts) - 1, -1, -1):
+            part = m.parts[j]
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+                parts = list(m.parts)
+                parts[j] = dataclasses.replace(part, content=prompt)
+                out[i] = dataclasses.replace(m, parts=parts)
+                return out
+    return out
+
+
 def _describe(response: ModelResponse) -> dict[str, Any]:
     texts = [p.content for p in response.parts if isinstance(p, TextPart)]
     return llm_output(
@@ -115,11 +133,18 @@ class _GovernedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        prompt = _latest_prompt(messages)
+
+        async def call(approved: str | None) -> ModelResponse:
+            # Input guardrails may have redacted the prompt: the provider gets what OpenBox approved.
+            sent = _with_prompt(messages, approved) if approved is not None and approved != prompt else messages
+            return await self.wrapped.request(sent, model_settings, model_request_parameters)
+
         return await governed_llm_call(
             restate_context(),
-            lambda: self.wrapped.request(messages, model_settings, model_request_parameters),
+            call,
             _describe,
-            prompt=_latest_prompt(messages),
+            prompt=prompt,
             model=self.wrapped.model_name,
         )
 

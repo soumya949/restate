@@ -59,7 +59,7 @@ async def run(_ctx: restate.Context, req: Prompt) -> str:
 | `OpenBoxRestatePlugin` (`openbox_restate.adk`) | Google ADK: drop-in for Restate's `RestatePlugin` |
 | `OpenBoxRestateAgent` (`openbox_restate.pydantic_ai`) | Pydantic AI: drop-in for Restate's `RestateAgent` |
 | `OpenBoxRestateMiddleware` (`openbox_restate.langchain`) | LangChain `create_agent`: drop-in for Restate's `RestateMiddleware` |
-| `governed_llm_call` / `report_llm_call` (`openbox_restate.llm`) | Report a model call (model, tokens) for Model Usage. `govern_agent` does it for you |
+| `governed_llm_call` / `report_llm_call` (`openbox_restate.llm`) | Govern a model call as an `llm_call` activity (model, tokens): input guardrails redact the prompt, HALT / BLOCK / approval are enforced, and `call` receives the approved prompt. The framework integrations do it for you. `report_llm_call` is telemetry only |
 | `enable_openbox_spans()` (`openbox_restate.instrumentation`) | Report each tool's httpx, requests, urllib3, urllib, DB and file calls as spans |
 
 Configuration and verdict behaviour are the same as the TypeScript package; see its README. The environment variables are `OPENBOX_API_URL`, `OPENBOX_API_KEY`, `OPENBOX_AGENT_DID`, `OPENBOX_AGENT_PRIVATE_KEY` and the `OPENBOX_RESTATE_*` overrides.

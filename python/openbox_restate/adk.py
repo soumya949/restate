@@ -32,6 +32,7 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
+from google.genai.types import Content, Part
 from restate.ext.adk import RestatePlugin
 from restate.extensions import current_context
 
@@ -73,6 +74,23 @@ def _latest_user_text(llm_request: LlmRequest) -> str | None:
     return None
 
 
+def _with_user_text(llm_request: LlmRequest, original: str, text: str) -> None:
+    """Replace the text of the user turns carrying ``original`` (the prompt OpenBox checked) with ``text``.
+
+    Every such turn, not just the latest: Restate re-runs the ADK runner on replay and an
+    in-memory session then holds the same user message more than once. Non-text parts are kept,
+    and new ``Content`` objects go in the request's list, so the session history is not changed.
+    """
+    contents = llm_request.contents or []
+    for i, content in enumerate(contents):
+        if getattr(content, "role", None) != "user":
+            continue
+        texts = [p.text for p in content.parts or [] if getattr(p, "text", None)]
+        if texts and " ".join(t for t in texts if t) == original:
+            others = [p for p in content.parts or [] if not getattr(p, "text", None)]
+            contents[i] = Content(role="user", parts=[Part.from_text(text=text), *others])
+
+
 def _describe(response: LlmResponse | None, model: str | None) -> dict[str, Any]:
     if response is None:
         return llm_output(model=model)
@@ -101,13 +119,20 @@ class OpenBoxRestatePlugin(RestatePlugin):
         self, *, callback_context: CallbackContext, llm_request: LlmRequest
     ) -> LlmResponse | None:
         model = llm_request.model
+        prompt = _latest_user_text(llm_request)
+
+        async def call(approved: str | None) -> LlmResponse | None:
+            if prompt is not None and approved is not None and approved != prompt:  # input guardrails redacted it
+                _with_user_text(llm_request, prompt, approved)
+            return await super(OpenBoxRestatePlugin, self).before_model_callback(
+                callback_context=callback_context, llm_request=llm_request
+            )
+
         return await governed_llm_call(
             _ctx(),
-            lambda: super(OpenBoxRestatePlugin, self).before_model_callback(
-                callback_context=callback_context, llm_request=llm_request
-            ),
+            call,
             lambda r: _describe(r, model),
-            prompt=_latest_user_text(llm_request),
+            prompt=prompt,
             model=model,
         )
 

@@ -255,7 +255,7 @@ p2_app.PROVIDER_PORT.append(API_PORT)
 async def llm(ctx: restate.Context, prompt: str) -> dict[str, Any]:
     return await governed_llm_call(
         ctx,
-        lambda: call_api(ctx, "llm"),
+        lambda _approved: call_api(ctx, "llm"),
         lambda r: llm_output(model="fake-llm", input_tokens=3, output_tokens=2, completion="hi"),
         prompt=prompt,
     )

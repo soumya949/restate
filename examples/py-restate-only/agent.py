@@ -98,6 +98,14 @@ TOOLS = [
 ]
 
 # <start_here>
+def with_user_prompt(messages: list[dict[str, Any]], prompt: str | None) -> list[dict[str, Any]]:
+    """The conversation with the latest user turn replaced by the prompt OpenBox approved."""
+    if prompt is None:
+        return messages
+    i = max((j for j, m in enumerate(messages) if m.get("role") == "user"), default=-1)
+    return messages if i < 0 else [*messages[:i], {"role": "user", "content": prompt}, *messages[i + 1 :]]
+
+
 agent_service = restate.Service("agent")
 
 
@@ -112,8 +120,10 @@ async def run(ctx: restate.Context, prompt: Prompt) -> str | None:
 
     while True:
 
-        async def call_llm() -> LlmResult:
-            resp = await acompletion(model=os.environ.get("OPENAI_MODEL", "gpt-5.4"), messages=messages, tools=TOOLS)
+        async def call_llm(approved: str | None) -> LlmResult:
+            resp = await acompletion(
+                model=os.environ.get("OPENAI_MODEL", "gpt-5.4"), messages=with_user_prompt(messages, approved), tools=TOOLS
+            )
             usage = getattr(resp, "usage", None)
             return LlmResult(
                 message=resp.choices[0].message,
@@ -122,10 +132,11 @@ async def run(ctx: restate.Context, prompt: Prompt) -> str | None:
                 output_tokens=getattr(usage, "completion_tokens", None),
             )
 
-        # OPENBOX: an llm_call activity around the journaled call (its HTTP request becomes a span)
+        # OPENBOX: an llm_call activity around the journaled call (its HTTP request becomes a span).
+        # The model gets the prompt OpenBox approved (input guardrails may have redacted it).
         llm = await governed_llm_call(
             ctx,
-            lambda: ctx.run_typed("LLM call", call_llm),
+            lambda approved: ctx.run_typed("LLM call", call_llm, approved=approved),
             lambda r: llm_output(
                 model=r.model,
                 completion=r.message.content,

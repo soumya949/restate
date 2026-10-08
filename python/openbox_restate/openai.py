@@ -39,7 +39,7 @@ from restate.ext.openai import durable_function_tool, raise_terminal_errors, res
 from .context import require_governance_context
 from .errors import hook_verdict_of
 from .governed_run import governed_run, is_blocked
-from .llm import llm_finished, llm_output, llm_scope_info, llm_started
+from .llm import llm_finished, llm_output, llm_pre, llm_scope_info
 
 __all__ = ["govern_agent", "govern_tool", "governed_function_tool"]
 
@@ -117,6 +117,21 @@ def _text_of(item: Any) -> str | None:
     return None
 
 
+def _set_text(item: Any, text: str) -> None:
+    """Replace the text of a user input item in place (non-text parts, e.g. images, are kept)."""
+    content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
+    if isinstance(content, list):
+        kinds = [p.get("type") if isinstance(p, dict) else getattr(p, "type", None) for p in content]
+        others = [p for p, kind in zip(content, kinds, strict=True) if kind != "input_text"]
+        new: Any = [{"type": "input_text", "text": text}, *others]
+    else:
+        new = text
+    if isinstance(item, dict):
+        item["content"] = new
+    else:
+        item.content = new
+
+
 def _model_name(agent: Agent[Any]) -> str | None:
     model = agent.model
     if isinstance(model, str):
@@ -132,7 +147,7 @@ def _model_name(agent: Agent[Any]) -> str | None:
 
 
 class _OpenBoxAgentHooks(AgentHooks[Any]):
-    """Reports each model call (telemetry only), then forwards every hook to the agent's own hooks."""
+    """Governs each model call (input guardrails, verdict), then forwards every hook to the agent's own hooks."""
 
     def __init__(self, inner: AgentHooks[Any] | None) -> None:
         self._inner = inner
@@ -140,17 +155,26 @@ class _OpenBoxAgentHooks(AgentHooks[Any]):
 
     async def on_llm_start(self, context: Any, agent: Any, system_prompt: Any, input_items: Any) -> None:
         prompt = None
+        latest = None
         for item in reversed(list(input_items or [])):
             prompt = _text_of(item)
             if prompt:
+                latest = item
                 break
         g = require_governance_context()
         # Started BEFORE the model call, and marked as the invocation's in-flight llm_call, so the
         # provider's HTTP request is captured as its span (hooks run in other tasks: a ContextVar
         # set here would not reach the model call, the shared governance context does).
-        aid, started_at = await llm_started(restate_context(), g, prompt)
-        self._pending[g.workflow_id] = (aid, started_at)
-        g.active_scope = llm_scope_info(g, aid)
+        # Enforced: HALT / BLOCK / a failed guardrail stop the run before the model is called.
+        try:
+            pre = await llm_pre(restate_context(), g, prompt)
+        except TerminalError as err:
+            raise _as_agents_exception(err) from err.__cause__
+        if pre.redacted and latest is not None and pre.prompt is not None:
+            # input_items is the list the model receives: the provider sees the redacted prompt.
+            _set_text(latest, pre.prompt)
+        self._pending[g.workflow_id] = (pre.aid, pre.started_at)
+        g.active_scope = llm_scope_info(g, pre.aid)
         if self._inner:
             await self._inner.on_llm_start(context, agent, system_prompt, input_items)
 
