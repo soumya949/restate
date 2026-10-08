@@ -25,6 +25,8 @@ services:
     environment:
       UV_PROJECT_ENVIRONMENT: /venv
       UV_LINK_MODE: copy
+      # Restate Cloud: accept only requests signed by your environment (publickeyv1_… keys)
+      RESTATE_IDENTITY_KEYS: ${RESTATE_IDENTITY_KEYS:-}
     command: sh -c "uv sync --quiet && uv run python __main__.py"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 9080), 2)"]

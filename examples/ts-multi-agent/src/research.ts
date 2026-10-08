@@ -82,4 +82,6 @@ const research = restate.service({
 
 // <end_here>
 
-restate.serve({ services: [research], port: Number(process.env["PORT"] ?? 9083) });
+// Restate Cloud: accept only requests signed by your environment (comma-separated publickeyv1_… keys).
+const identityKeys = process.env["RESTATE_IDENTITY_KEYS"]?.split(",").filter(Boolean);
+restate.serve({ services: [research], port: Number(process.env["PORT"] ?? 9083), ...(identityKeys?.length ? { identityKeys } : {}) });
